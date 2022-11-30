@@ -16,6 +16,7 @@ type Client interface {
 	ServiceAPI
 	ConfigAPI
 	TestSourceAPI
+	CopyFileAPI
 }
 
 // TestAPI describes test api methods
@@ -27,7 +28,7 @@ type TestAPI interface {
 	DeleteTest(name string) error
 	DeleteTests(selector string) error
 	ListTests(selector string) (tests testkube.Tests, err error)
-	ListTestWithExecutions(selector string) (tests testkube.TestWithExecutions, err error)
+	ListTestWithExecutionSummaries(selector string) (tests testkube.TestWithExecutionSummaries, err error)
 	ExecuteTest(id, executionName string, options ExecuteTestOptions) (executions testkube.Execution, err error)
 	ExecuteTests(selector string, concurrencyLevel int, options ExecuteTestOptions) (executions []testkube.Execution, err error)
 	Logs(id string) (logs chan output.Output, err error)
@@ -49,7 +50,7 @@ type TestSuiteAPI interface {
 	GetTestSuite(id string) (testSuite testkube.TestSuite, err error)
 	GetTestSuiteWithExecution(id string) (testSuite testkube.TestSuiteWithExecution, err error)
 	ListTestSuites(selector string) (testSuites testkube.TestSuites, err error)
-	ListTestSuiteWithExecutions(selector string) (testSuitesWithExecutions testkube.TestSuiteWithExecutions, err error)
+	ListTestSuiteWithExecutionSummaries(selector string) (testSuitesWithExecutionSummaries testkube.TestSuiteWithExecutionSummaries, err error)
 	DeleteTestSuite(name string) error
 	DeleteTestSuites(selector string) error
 	ExecuteTestSuite(id, executionName string, options ExecuteTestSuiteOptions) (executions testkube.TestSuiteExecution, err error)
@@ -59,8 +60,9 @@ type TestSuiteAPI interface {
 // TestSuiteExecutionAPI describes test suite execution api methods
 type TestSuiteExecutionAPI interface {
 	GetTestSuiteExecution(executionID string) (execution testkube.TestSuiteExecution, err error)
-	ListTestSuiteExecutions(test string, limit int, selector string) (executions testkube.TestSuiteExecutionsResult, err error)
+	ListTestSuiteExecutions(testsuite string, limit int, selector string) (executions testkube.TestSuiteExecutionsResult, err error)
 	WatchTestSuiteExecution(executionID string) (execution chan testkube.TestSuiteExecution, err error)
+	AbortTestSuiteExecution(executionID string) error
 }
 
 // ExecutorAPI describes executor api methods
@@ -104,6 +106,11 @@ type TestSourceAPI interface {
 	DeleteTestSources(selector string) (err error)
 }
 
+// CopyFileAPI describes methods to handle files in the object storage
+type CopyFileAPI interface {
+	UploadFile(parentName string, parentType TestingType, filePath string, fileContent []byte) error
+}
+
 // TODO consider replacing below types by testkube.*
 
 // UpsertTestSuiteOptions - mapping to OpenAPI schema for creating/changing testsuite
@@ -135,7 +142,9 @@ type ExecuteTestOptions struct {
 	HTTPProxy                     string
 	HTTPSProxy                    string
 	Image                         string
-	CopyFiles                     map[string]string
+	Uploads                       []string
+	BucketName                    string
+	ArtifactRequest               *testkube.ArtifactRequest
 }
 
 // ExecuteTestSuiteOptions contains test suite run options
@@ -149,8 +158,9 @@ type ExecuteTestSuiteOptions struct {
 // Gettable is an interface of gettable objects
 type Gettable interface {
 	testkube.Test | testkube.TestSuite | testkube.ExecutorDetails |
-		testkube.Webhook | testkube.TestWithExecution | testkube.TestSuiteWithExecution |
-		testkube.Artifact | testkube.ServerInfo | testkube.Config | testkube.DebugInfo | testkube.TestSource
+		testkube.Webhook | testkube.TestWithExecution | testkube.TestSuiteWithExecution | testkube.TestWithExecutionSummary |
+		testkube.TestSuiteWithExecutionSummary | testkube.Artifact | testkube.ServerInfo | testkube.Config | testkube.DebugInfo |
+		testkube.TestSource
 }
 
 // Executable is an interface of executable objects
@@ -169,6 +179,7 @@ type Transport[A All] interface {
 	Execute(method, uri string, body []byte, params map[string]string) (result A, err error)
 	ExecuteMultiple(method, uri string, body []byte, params map[string]string) (result []A, err error)
 	Delete(uri, selector string, isContentExpected bool) error
+	ExecuteMethod(method, uri, selector string, isContentExpected bool) error
 	GetURI(pathTemplate string, params ...interface{}) string
 	GetLogs(uri string, logs chan output.Output) error
 	GetFile(uri, fileName, destination string) (name string, err error)

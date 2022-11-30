@@ -5,7 +5,9 @@ import (
 	"testing"
 	"time"
 
+	v3 "github.com/kubeshop/testkube-operator/apis/tests/v3"
 	"github.com/kubeshop/testkube/pkg/api/v1/testkube"
+	"github.com/kubeshop/testkube/pkg/executor"
 	"github.com/kubeshop/testkube/pkg/executor/client"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
@@ -23,6 +25,7 @@ func TestExecuteAsync(t *testing.T) {
 		metrics:    FakeMetricCounter{},
 		emitter:    FakeEmitter{},
 		namespace:  "default",
+		configMap:  FakeConfigRepository{},
 	}
 
 	execution := &testkube.Execution{Id: "1"}
@@ -44,6 +47,7 @@ func TestExecuteSync(t *testing.T) {
 		metrics:    FakeMetricCounter{},
 		emitter:    FakeEmitter{},
 		namespace:  "default",
+		configMap:  FakeConfigRepository{},
 	}
 
 	execution := &testkube.Execution{Id: "1"}
@@ -53,25 +57,27 @@ func TestExecuteSync(t *testing.T) {
 	assert.Equal(t, testkube.PASSED_ExecutionStatus, *res.Status)
 }
 
-func TestNewJobSpecEmptyArgs(t *testing.T) {
+func TestNewExecutorJobSpecEmptyArgs(t *testing.T) {
 	jobOptions := &JobOptions{
-		Name:      "name",
-		Namespace: "namespace",
-		InitImage: "kubeshop/testkube-executor-init:0.7.10",
-		Image:     "ubuntu",
-		Args:      []string{},
+		Name:        "name",
+		Namespace:   "namespace",
+		InitImage:   "kubeshop/testkube-executor-init:0.7.10",
+		Image:       "ubuntu",
+		JobTemplate: defaultJobTemplate,
+		Args:        []string{},
 	}
-	spec, err := NewJobSpec(logger(), jobOptions)
+	spec, err := NewExecutorJobSpec(logger(), jobOptions)
 	assert.NoError(t, err)
 	assert.NotNil(t, spec)
 }
 
-func TestNewJobSpecWithArgs(t *testing.T) {
+func TestNewExecutorJobSpecWithArgs(t *testing.T) {
 	jobOptions := &JobOptions{
 		Name:                  "name",
 		Namespace:             "namespace",
 		InitImage:             "kubeshop/testkube-executor-init:0.7.10",
 		Image:                 "curl",
+		JobTemplate:           defaultJobTemplate,
 		ImagePullSecrets:      []string{"secret-name"},
 		Command:               []string{"/bin/curl"},
 		Args:                  []string{"-v", "https://testkube.kubeshop.io"},
@@ -79,7 +85,7 @@ func TestNewJobSpecWithArgs(t *testing.T) {
 		Envs:                  map[string]string{"key": "value"},
 		Variables:             map[string]testkube.Variable{"aa": testkube.Variable{Name: "name", Value: "value", Type_: testkube.VariableTypeBasic}},
 	}
-	spec, err := NewJobSpec(logger(), jobOptions)
+	spec, err := NewExecutorJobSpec(logger(), jobOptions)
 	assert.NoError(t, err)
 	assert.NotNil(t, spec)
 
@@ -95,17 +101,107 @@ func TestNewJobSpecWithArgs(t *testing.T) {
 	assert.Equal(t, wantEnvs, spec.Spec.Template.Spec.Containers[0].Env)
 }
 
-func TestNewJobSpecWithoutInitImage(t *testing.T) {
+func TestNewExecutorJobSpecWithoutInitImage(t *testing.T) {
 	jobOptions := &JobOptions{
-		Name:      "name",
-		Namespace: "namespace",
-		InitImage: "",
-		Image:     "ubuntu",
-		Args:      []string{},
+		Name:        "name",
+		Namespace:   "namespace",
+		InitImage:   "",
+		Image:       "ubuntu",
+		JobTemplate: defaultJobTemplate,
+		Args:        []string{},
 	}
-	spec, err := NewJobSpec(logger(), jobOptions)
+	spec, err := NewExecutorJobSpec(logger(), jobOptions)
 	assert.NoError(t, err)
 	assert.NotNil(t, spec)
+}
+
+func TestNewExecutorJobSpecWithWorkingDirRelative(t *testing.T) {
+	jobOptions, _ := NewJobOptions(
+		executor.Images{},
+		executor.Templates{},
+		"",
+		testkube.Execution{
+			Id:            "name",
+			TestName:      "name-test-1",
+			TestNamespace: "namespace",
+		},
+		client.ExecuteOptions{
+			TestSpec: v3.TestSpec{
+				ExecutionRequest: &v3.ExecutionRequest{
+					Image: "ubuntu",
+				},
+				Content: &v3.TestContent{
+					Repository: &v3.Repository{
+						WorkingDir: "relative/path",
+					},
+				},
+			},
+		},
+	)
+	spec, err := NewExecutorJobSpec(logger(), jobOptions)
+	assert.NoError(t, err)
+	assert.NotNil(t, spec)
+
+	assert.Equal(t, repoPath+"/relative/path", spec.Spec.Template.Spec.Containers[0].WorkingDir)
+}
+
+func TestNewExecutorJobSpecWithWorkingDirAbsolute(t *testing.T) {
+	jobOptions, _ := NewJobOptions(
+		executor.Images{},
+		executor.Templates{},
+		"",
+		testkube.Execution{
+			Id:            "name",
+			TestName:      "name-test-1",
+			TestNamespace: "namespace",
+		},
+		client.ExecuteOptions{
+			TestSpec: v3.TestSpec{
+				ExecutionRequest: &v3.ExecutionRequest{
+					Image: "ubuntu",
+				},
+				Content: &v3.TestContent{
+					Repository: &v3.Repository{
+						WorkingDir: "/absolute/path",
+					},
+				},
+			},
+		},
+	)
+	spec, err := NewExecutorJobSpec(logger(), jobOptions)
+	assert.NoError(t, err)
+	assert.NotNil(t, spec)
+
+	assert.Equal(t, "/absolute/path", spec.Spec.Template.Spec.Containers[0].WorkingDir)
+}
+
+func TestNewExecutorJobSpecWithoutWorkingDir(t *testing.T) {
+	jobOptions, _ := NewJobOptions(
+		executor.Images{},
+		executor.Templates{},
+		"",
+		testkube.Execution{
+			Id:            "name",
+			TestName:      "name-test-1",
+			TestNamespace: "namespace",
+		},
+		client.ExecuteOptions{
+			Namespace: "namespace",
+			TestSpec: v3.TestSpec{
+				ExecutionRequest: &v3.ExecutionRequest{
+					Image: "ubuntu",
+				},
+				Content: &v3.TestContent{
+					Repository: &v3.Repository{},
+				},
+			},
+		},
+	)
+	spec, err := NewExecutorJobSpec(logger(), jobOptions)
+	assert.NoError(t, err)
+	assert.NotNil(t, spec)
+
+	assert.Empty(t, spec.Spec.Template.Spec.Containers[0].WorkingDir)
 }
 
 func logger() *zap.SugaredLogger {
@@ -165,5 +261,24 @@ func (FakeResultRepository) StartExecution(ctx context.Context, id string, start
 	return nil
 }
 func (FakeResultRepository) EndExecution(ctx context.Context, execution testkube.Execution) error {
+	return nil
+}
+
+type FakeConfigRepository struct {
+}
+
+func (FakeConfigRepository) GetUniqueClusterId(ctx context.Context) (string, error) {
+	return "", nil
+}
+
+func (FakeConfigRepository) GetTelemetryEnabled(ctx context.Context) (ok bool, err error) {
+	return false, nil
+}
+
+func (FakeConfigRepository) Get(ctx context.Context) (testkube.Config, error) {
+	return testkube.Config{}, nil
+}
+
+func (FakeConfigRepository) Upsert(ctx context.Context, config testkube.Config) error {
 	return nil
 }

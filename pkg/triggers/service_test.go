@@ -18,6 +18,7 @@ import (
 	"github.com/kubeshop/testkube/internal/pkg/api/repository/result"
 	"github.com/kubeshop/testkube/internal/pkg/api/repository/testresult"
 	"github.com/kubeshop/testkube/pkg/api/v1/testkube"
+	"github.com/kubeshop/testkube/pkg/config"
 	"github.com/kubeshop/testkube/pkg/event"
 	"github.com/kubeshop/testkube/pkg/event/bus"
 	"github.com/kubeshop/testkube/pkg/executor/client"
@@ -50,6 +51,7 @@ func TestService_Run(t *testing.T) {
 	mockTestSuitesClient := testsuitesv2.NewMockInterface(mockCtrl)
 	mockTestSourcesClient := testsourcesv1.NewMockInterface(mockCtrl)
 	mockSecretClient := secret.NewMockInterface(mockCtrl)
+	configMap := config.NewMockRepository(mockCtrl)
 
 	mockExecutor := client.NewMockExecutor(mockCtrl)
 
@@ -66,7 +68,7 @@ func TestService_Run(t *testing.T) {
 			},
 		},
 	}
-	mockTestsClient.EXPECT().Get("some-test").Return(&mockTest, nil).Times(2)
+	mockTestsClient.EXPECT().Get("some-test").Return(&mockTest, nil).AnyTimes()
 	var mockNextExecutionNumber int32 = 1
 	mockResultRepository.EXPECT().GetNextExecutionNumber(gomock.Any(), "some-test").Return(mockNextExecutionNumber, nil)
 	mockExecution := testkube.Execution{Name: "test-execution-1"}
@@ -90,7 +92,7 @@ func TestService_Run(t *testing.T) {
 			JobTemplate:      "",
 		},
 	}
-	mockExecutorsClient.EXPECT().GetByType(mockExecutorTypes).Return(&mockExecutorV1, nil)
+	mockExecutorsClient.EXPECT().GetByType(mockExecutorTypes).Return(&mockExecutorV1, nil).AnyTimes()
 	mockResultRepository.EXPECT().Insert(gomock.Any(), gomock.Any()).Return(nil)
 	mockResultRepository.EXPECT().StartExecution(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	mockExecutionResult := testkube.ExecutionResult{Status: testkube.ExecutionStatusRunning}
@@ -118,6 +120,7 @@ func TestService_Run(t *testing.T) {
 		mockSecretClient,
 		mockEventEmitter,
 		testLogger,
+		configMap,
 	)
 
 	mockLeaseBackend := NewMockLeaseBackend(mockCtrl)
@@ -137,6 +140,7 @@ func TestService_Run(t *testing.T) {
 		mockTestResultRepository,
 		mockLeaseBackend,
 		testLogger,
+		configMap,
 		WithClusterID(testClusterID),
 		WithIdentifier(testIdentifier),
 		WithScraperInterval(50*time.Millisecond),

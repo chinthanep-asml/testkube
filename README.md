@@ -26,6 +26,7 @@
   <a href=""><img title="Code builds" src="https://img.shields.io/github/workflow/status/kubeshop/testkube/Code%20build%20and%20checks"/></a>
   <a href=""><img title="mit licence" src="https://img.shields.io/badge/License-MIT-yellow.svg"/></a>
   <a href="https://github.com/kubeshop/testkube/releases"><img title="Release date" src="https://img.shields.io/github/release-date/kubeshop/testkube"/></a>
+  <a href="https://contribute.design/kubeshop/testkube"><img title="Design contributions welcome" src="https://contribute.design/api/shield/kubeshop/testkube"/></a>
 </p>
 
 <p align="center">
@@ -103,6 +104,7 @@ Shout-out to our contributors 🎉 - you're great!
 - ⭐️ [@lreimer](https://github.com/lreimer) - [K6 executor](https://github.com/kubeshop/testkube-executor-k6) [Gradle executor](https://github.com/kubeshop/testkube-executor-gradle) [Maven executor](https://github.com/kubeshop/testkube-executor-maven)
 - ⭐️ [@jdborneman-terminus](https://github.com/jdborneman-terminus) - [Ginkgo executor](https://github.com/kubeshop/testkube-executor-ginkgo) 
 - ️⭐️ [@abhishek9686](https://github.com/abhishek9686)
+- ⭐️ [@andrei-n-cosma](https://github.com/andrei-n-cosma)
 
 
 Go to [contribution document](CONTRIBUTING.md) to read more how can you help us 🔥

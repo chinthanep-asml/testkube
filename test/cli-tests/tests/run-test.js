@@ -2,7 +2,7 @@ import {execSync} from 'node:child_process'
 import { expect } from 'chai';
 
 import ApiHelpers from '../helpers/api-helpers';
-const apiHelpers=new ApiHelpers();
+const apiHelpers=new ApiHelpers(process.env.API_URL);
 import TestDataHandler from '../helpers/test-data-handlers';
 const testDataHandler=new TestDataHandler();
 import OutputValidators from '../helpers/output-validators';
@@ -27,6 +27,9 @@ async function runTestFlow(testName) {
     const executionStatus = await apiHelpers.getExecutionStatus(executionId)
 
     expect(executionStatus).to.be.equal('running')
+
+    //cleanup
+    await apiHelpers.abortTest(testName, executionId) //Abort test run not to waste compute resources (separate results validation in test-results.js)
 }
 
 describe('Run test with CLI', function () {

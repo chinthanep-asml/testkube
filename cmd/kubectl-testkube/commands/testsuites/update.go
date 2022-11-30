@@ -25,6 +25,7 @@ func UpdateTestSuitesCmd() *cobra.Command {
 		secretVariables          map[string]string
 		httpProxy, httpsProxy    string
 		secretVariableReferences map[string]string
+		timeout                  int32
 	)
 
 	cmd := &cobra.Command{
@@ -45,9 +46,6 @@ func UpdateTestSuitesCmd() *cobra.Command {
 				ui.ExitOnError("reading stdin", err)
 			}
 
-			if name == "" {
-				ui.Failf("pass valid test suite name (in '--name' flag)")
-			}
 			var options testkubeapiv1.UpsertTestSuiteOptions
 
 			err = json.Unmarshal(content, &options)
@@ -55,6 +53,10 @@ func UpdateTestSuitesCmd() *cobra.Command {
 
 			if name != "" {
 				options.Name = name
+			}
+
+			if options.Name == "" {
+				ui.Failf("pass valid test suite name (in '--name' flag)")
 			}
 
 			client, namespace := common.GetClient(cmd)
@@ -80,6 +82,7 @@ func UpdateTestSuitesCmd() *cobra.Command {
 				Name:       cmd.Flag("execution-name").Value.String(),
 				HttpProxy:  cmd.Flag("http-proxy").Value.String(),
 				HttpsProxy: cmd.Flag("https-proxy").Value.String(),
+				Timeout:    timeout,
 			}
 
 			options.Schedule = cmd.Flag("schedule").Value.String()
@@ -103,6 +106,7 @@ func UpdateTestSuitesCmd() *cobra.Command {
 	cmd.Flags().StringVar(&httpProxy, "http-proxy", "", "http proxy for executor containers")
 	cmd.Flags().StringToStringVarP(&secretVariableReferences, "secret-variable-reference", "", nil, "secret variable references in a form name1=secret_name1=secret_key1")
 	cmd.Flags().StringVar(&httpsProxy, "https-proxy", "", "https proxy for executor containers")
+	cmd.Flags().Int32Var(&timeout, "timeout", 0, "duration in seconds for test suite to timeout. 0 disables timeout.")
 
 	return cmd
 }

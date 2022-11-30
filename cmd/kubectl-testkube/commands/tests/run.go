@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
 	"github.com/kubeshop/testkube/cmd/kubectl-testkube/commands/common"
@@ -37,6 +38,9 @@ func NewRunTestCmd() *cobra.Command {
 		executionLabels          map[string]string
 		secretVariableReferences map[string]string
 		copyFiles                []string
+		artifactStorageClassName string
+		artifactVolumeMountPath  string
+		artifactDirs             []string
 	)
 
 	cmd := &cobra.Command{
@@ -61,6 +65,9 @@ func NewRunTestCmd() *cobra.Command {
 			executorArgs, err := testkube.PrepareExecutorArgs(binaryArgs)
 			ui.ExitOnError("getting args", err)
 
+			err = validateArtifactRequest(artifactStorageClassName, artifactVolumeMountPath, artifactDirs)
+			ui.ExitOnError("validating artifact flags", err)
+
 			var executions []testkube.Execution
 			client, namespace := common.GetClient(cmd)
 			options := apiv1.ExecuteTestOptions{
@@ -73,6 +80,14 @@ func NewRunTestCmd() *cobra.Command {
 				HTTPSProxy:                    httpsProxy,
 				Envs:                          envs,
 				Image:                         image,
+			}
+
+			if artifactStorageClassName != "" && artifactVolumeMountPath != "" {
+				options.ArtifactRequest = &testkube.ArtifactRequest{
+					StorageClassName: artifactStorageClassName,
+					VolumeMountPath:  artifactVolumeMountPath,
+					Dirs:             artifactDirs,
+				}
 			}
 
 			switch {
@@ -88,13 +103,17 @@ func NewRunTestCmd() *cobra.Command {
 					os.Exit(1)
 				}
 
-				if len(test.CopyFiles) != 0 || len(copyFiles) != 0 {
-					copyFileList, err := mergeCopyFiles(test.CopyFiles, copyFiles)
+				if len(copyFiles) > 0 {
+					options.BucketName = uuid.New().String()
+					err = uploadFiles(client, options.BucketName, apiv1.Execution, copyFiles)
+					ui.ExitOnError("could not upload files", err)
+				}
+
+				if len(test.Uploads) != 0 || len(copyFiles) != 0 {
+					copyFileList, err := mergeCopyFiles(test.Uploads, copyFiles)
 					ui.ExitOnError("could not merge files", err)
 
 					ui.Warn("Testkube will use the following file mappings:", copyFileList...)
-					options.CopyFiles, err = readCopyFiles(copyFileList)
-					ui.ExitOnError("could not read config files", err)
 				}
 
 				for i := 0; i < iterations; i++ {
@@ -156,7 +175,7 @@ func NewRunTestCmd() *cobra.Command {
 	cmd.Flags().StringVar(&downloadDir, "download-dir", "artifacts", "download dir")
 	cmd.Flags().BoolVarP(&downloadArtifactsEnabled, "download-artifacts", "d", false, "downlaod artifacts automatically")
 	cmd.Flags().StringToStringVarP(&envs, "env", "", map[string]string{}, "envs in a form of name1=val1 passed to executor")
-	cmd.Flags().StringToStringVarP(&secretEnvs, "secret", "", map[string]string{}, "secret envs in a form of secret_name1=secret_key1 passed to executor")
+	cmd.Flags().StringToStringVarP(&secretEnvs, "secret", "", map[string]string{}, "secret envs in a form of secret_key1=secret_name1 passed to executor")
 	cmd.Flags().StringSliceVarP(&selectors, "label", "l", nil, "label key value pair: --label key1=value1")
 	cmd.Flags().IntVar(&concurrencyLevel, "concurrency", 10, "concurrency level for multiple test execution")
 	cmd.Flags().IntVar(&iterations, "iterations", 1, "how many times to run the test")
@@ -165,6 +184,9 @@ func NewRunTestCmd() *cobra.Command {
 	cmd.Flags().StringToStringVarP(&executionLabels, "execution-label", "", nil, "execution-label key value pair: --execution-label key1=value1")
 	cmd.Flags().StringToStringVarP(&secretVariableReferences, "secret-variable-reference", "", nil, "secret variable references in a form name1=secret_name1=secret_key1")
 	cmd.Flags().StringArrayVarP(&copyFiles, "copy-files", "", []string{}, "file path mappings from host to pod of form source:destination")
+	cmd.Flags().StringVar(&artifactStorageClassName, "artifact-storage-class-name", "", "artifact storage class name for container executor")
+	cmd.Flags().StringVar(&artifactVolumeMountPath, "artifact-volume-mount-path", "", "artifact volume mount path for container executor")
+	cmd.Flags().StringArrayVarP(&artifactDirs, "artifact-dir", "", []string{}, "artifact dirs for container executor")
 
 	return cmd
 }

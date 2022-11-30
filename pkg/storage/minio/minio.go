@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -49,11 +51,17 @@ func NewClient(endpoint, accessKeyID, secretAccessKey, location, token string, s
 
 // Connect connects to MinIO server
 func (c *Client) Connect() error {
+	creds := credentials.NewIAM("")
+	c.Log.Infow("connecting to minio", "endpoint", c.Endpoint, "accessKeyID", c.accessKeyID, "location", c.location, "token", c.token, "ssl", c.ssl)
+	if c.accessKeyID != "" && c.secretAccessKey != "" {
+		creds = credentials.NewStaticV4(c.accessKeyID, c.secretAccessKey, c.token)
+	}
 	mclient, err := minio.New(c.Endpoint, &minio.Options{
-		Creds:  credentials.NewStaticV4(c.accessKeyID, c.secretAccessKey, c.token),
+		Creds:  creds,
 		Secure: c.ssl,
 	})
 	if err != nil {
+		c.Log.Errorw("error connecting to minio", "error", err)
 		return err
 	}
 	c.minioclient = mclient
@@ -65,6 +73,7 @@ func (c *Client) CreateBucket(bucket string) error {
 	ctx := context.Background()
 	err := c.minioclient.MakeBucket(ctx, bucket, minio.MakeBucketOptions{Region: c.location})
 	if err != nil {
+		c.Log.Errorw("error creating bucket", "error", err)
 		// Check to see if we already own this bucket (which happens if you run this twice)
 		exists, errBucketExists := c.minioclient.BucketExists(ctx, bucket)
 		if errBucketExists == nil && exists {
@@ -78,7 +87,7 @@ func (c *Client) CreateBucket(bucket string) error {
 
 // DeleteBucket deletes bucket by name
 func (c *Client) DeleteBucket(bucket string, force bool) error {
-	return c.minioclient.RemoveBucketWithOptions(context.TODO(), bucket, minio.BucketOptions{ForceDelete: force})
+	return c.minioclient.RemoveBucketWithOptions(context.TODO(), bucket, minio.RemoveBucketOptions{ForceDelete: force})
 }
 
 // ListBuckets lists available buckets
@@ -213,4 +222,78 @@ func (c *Client) ScrapeArtefacts(id string, directories ...string) error {
 		}
 	}
 	return nil
+}
+
+// UploadFile saves a file to be copied into a running execution
+func (c *Client) UploadFile(bucket string, filePath string, reader io.Reader, objectSize int64) error {
+	if err := c.Connect(); err != nil {
+		return fmt.Errorf("minio UploadFile connection error: %w", err)
+	}
+
+	exists, err := c.minioclient.BucketExists(context.TODO(), bucket)
+	if err != nil {
+		return fmt.Errorf("could not check if bucket already exists for copy files: %w", err)
+	}
+
+	if !exists {
+		c.Log.Debugw("creating minio bucket for copy files", "bucket", bucket)
+		err := c.CreateBucket(bucket)
+		if err != nil {
+			return fmt.Errorf("could not create bucket: %w", err)
+		}
+	}
+
+	c.Log.Debugw("saving object in minio", "file", filePath, "bucket", bucket)
+	_, err = c.minioclient.PutObject(context.Background(), bucket, filePath, reader, objectSize, minio.PutObjectOptions{ContentType: "application/octet-stream"})
+	if err != nil {
+		return fmt.Errorf("minio saving file (%s) put object error: %w", filePath, err)
+	}
+
+	return nil
+}
+
+// PlaceFiles saves the content of the buckets to the filesystem
+func (c *Client) PlaceFiles(buckets []string, prefix string) error {
+	c.Log.Infof("Getting the contents of buckets %s", buckets)
+	if err := c.Connect(); err != nil {
+		return fmt.Errorf("minio PlaceFiles connection error: %w", err)
+	}
+
+	for _, b := range buckets {
+		exists, err := c.minioclient.BucketExists(context.TODO(), b)
+		if err != nil {
+			return fmt.Errorf("could not check if bucket already exists for files: %w", err)
+		}
+		if !exists {
+			c.Log.Infof("Bucket %s does not exist", b)
+			continue
+		}
+
+		files, err := c.ListFiles(b)
+		if err != nil {
+			return fmt.Errorf("could not list files in bucket %s", b)
+		}
+
+		for _, f := range files {
+			c.Log.Infof("Getting file %s", f)
+			err = c.minioclient.FGetObject(context.Background(), b, f.Name, prefix+f.Name, minio.GetObjectOptions{})
+			if err != nil {
+				return fmt.Errorf("could not persist file %s from bucket %s: %w", f.Name, b, err)
+			}
+		}
+	}
+	return nil
+}
+
+// GetValidBucketName returns a minio-compatible bucket name
+func (c *Client) GetValidBucketName(parentType string, parentName string) string {
+	bucketName := fmt.Sprintf("%s-%s", parentType, parentName)
+	if len(bucketName) <= 63 {
+		return bucketName
+	}
+
+	h := fnv.New32a()
+	h.Write([]byte(bucketName))
+
+	return fmt.Sprintf("%s-%d", bucketName[:52], h.Sum32())
 }

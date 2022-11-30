@@ -544,6 +544,8 @@ paths:
         - $ref: "#/components/parameters/Selector"
         - $ref: "#/components/parameters/TextSearch"
         - $ref: "#/components/parameters/TestExecutionsStatusFilter"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/PageIndex"
       responses:
         200:
           description: successful operation
@@ -552,7 +554,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/TestSuiteWithExecution"
+                  $ref: "#/components/schemas/TestSuiteWithExecutionSummary"
             text/yaml:
               schema:
                 type: string
@@ -704,7 +706,28 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Problem"
-
+    patch:
+      parameters:
+        - $ref: "#/components/parameters/ID"
+        - $ref: "#/components/parameters/executionID"
+      tags:
+        - api
+        - testssuite
+        - executions
+      summary: "Aborts testsuite execution"
+      description: "Aborts testsuite execution with given executionID"
+      operationId: abortTestSuiteExecution
+      responses:
+        502:
+          description: "problem with read information from kubernetes cluster"
+          content:
+            application/problem+json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Problem"
+        204:
+          description: "no content"
   /test-suite-executions:
     post:
       parameters:
@@ -791,10 +814,10 @@ paths:
                 items:
                   $ref: "#/components/schemas/Problem"
 
-  /test-suite-executions/{id}:
+  /test-suite-executions/{executionID}:
     get:
       parameters:
-        - $ref: "#/components/parameters/ID"
+        - $ref: "#/components/parameters/executionID"
         - $ref: "#/components/parameters/LastNDays"
       tags:
         - executions
@@ -817,7 +840,27 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Problem"
-
+    patch:
+      parameters:
+        - $ref: "#/components/parameters/executionID"
+      tags:
+        - api
+        - testssuite
+        - executions
+      summary: "Aborts testsuite execution"
+      description: "Aborts testsuite execution with given executionID"
+      operationId: abortTestSuiteExecutionByID
+      responses:
+        502:
+          description: "problem with read information from kubernetes cluster"
+          content:
+            application/problem+json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Problem"
+        204:
+          description: "no content"
   /executions:
     post:
       parameters:
@@ -1245,6 +1288,8 @@ paths:
         - $ref: "#/components/parameters/Selector"
         - $ref: "#/components/parameters/TextSearch"
         - $ref: "#/components/parameters/ExecutionsStatusFilter"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/PageIndex"
       responses:
         200:
           description: "successful operation"
@@ -1253,7 +1298,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/TestWithExecution"
+                  $ref: "#/components/schemas/TestWithExecutionSummary"
             text/yaml:
               schema:
                 type: string
@@ -1404,7 +1449,7 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Problem"
-    delete:
+    patch:
       parameters:
         - $ref: "#/components/parameters/ID"
         - $ref: "#/components/parameters/executionID"
@@ -1413,15 +1458,19 @@ paths:
         - tests
         - executions
       summary: "Aborts execution"
-      description: "Aborts execution and returns execution details"
+      description: "Aborts execution with given executionID"
       operationId: abortExecution
       responses:
-        501:
-          description: not implemented yet
+        502:
+          description: "problem with read information from kubernetes cluster"
           content:
-            application/json:
+            application/problem+json:
               schema:
-                $ref: "#/components/schemas/ExecutionResult"
+                type: array
+                items:
+                  $ref: "#/components/schemas/Problem"
+        204:
+          description: "no content"
 
   /executors:
     get:
@@ -2100,6 +2149,36 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Problem"
+  /uploads:
+    post:
+      tags:
+        - api
+        - tests
+        - executions
+      summary: "Upload file"
+      description: "Upload file to be used in executions and tests"
+      operationId: uploads
+      requestBody:
+        $ref: "#/components/requestBodies/UploadsBody"
+      responses:
+        200:
+          description: "successful operation"
+          content:
+            application/json:
+              schema:
+                type: string
+            text/yaml:
+              schema:
+                type: string
+        500:
+          description: "could not upload file"
+          content:
+            application/problem+json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Problem"
+
 components:
   schemas:
     ExecutionsMetrics:
@@ -2415,7 +2494,9 @@ components:
         - running
         - passed
         - failed
-        - cancelled
+        - aborting
+        - aborted
+        - timeout
 
     TestSuiteStepExecutionResult:
       description: execution result returned from executor
@@ -2563,13 +2644,13 @@ components:
           type: string
           description: schedule to run test
           example: "* * * * *"
-        copyFiles:
+        uploads:
           type: array
           items:
             type: string
-          description: list of files that need to be copied into the test of form source:destination
+          description: list of file paths that will be needed from uploads
           example:
-            - /user/home/settings/runnerconfig.txt:/tmp/settings/config.txt
+            - settings/config.txt
         executionRequest:
           $ref: "#/components/schemas/ExecutionRequest"
 
@@ -2725,12 +2806,20 @@ components:
           example:
             env: "prod"
             app: "backend"
-        copyFiles:
-          type: object
-          additionalProperties:
+        uploads:
+          type: array
+          items:
             type: string
-          description: map of files with target location as key and contents as value
-
+          description: list of file paths that need to be copied into the test from uploads
+          example:
+            - settings/config.txt
+        bucketName:
+          type: string
+          description: minio bucket name to get uploads from
+          example: execution-c01d7cf6-ec3f-47f0-9556-a5d6e9009a43
+        artifactRequest:
+          $ref: "#/components/schemas/ArtifactRequest"
+          description: configuration parameters for storing container executor test artifacts
 
     Artifact:
       type: object
@@ -2985,6 +3074,26 @@ components:
           description: if provided we checkout the whole repository and run test from this directory
           example: "/"
 
+    ArtifactRequest:
+      description: artifact request body for container executors with test artifacts
+      type: object
+      required:
+        - storageClassName
+        - volumeMountPath
+      properties:
+        storageClassName:
+          type: string
+          description: artifact storage class name
+          example: artifact-volume-local
+        volumeMountPath:
+          type: string
+          description: artifact volume mount path
+        dirs:
+          type: array
+          items:
+            type: string
+          description: artifact directories
+
     ExecutionRequest:
       description: test execution request body
       type: object
@@ -3066,8 +3175,8 @@ components:
           additionalProperties:
             type: string
           example:
-            secret_name1: "kubernetes-secret-name"
-            secret_key1: "secret-key-name"
+            secret_key_name1: "secret-name"
+            secret_Key_name2: "secret-name"
         sync:
           type: boolean
           description: whether to start execution sync or async
@@ -3084,11 +3193,20 @@ components:
           format: int64
           description: duration in seconds the test may be active, until its stopped
           example: 1
-        copyFiles:
-          type: object
-          additionalProperties:
+        uploads:
+          type: array
+          items:
             type: string
-          description: map of files with target location as key and contents as value
+          description: list of file paths that need to be copied into the test from uploads
+          example:
+            - settings/config.txt
+        bucketName:
+          type: string
+          description: minio bucket name to get uploads from
+          example: execution-c01d7cf6-ec3f-47f0-9556-a5d6e9009a43
+        artifactRequest:
+          $ref: "#/components/schemas/ArtifactRequest"
+          description: configuration parameters for storing container executor test artifacts
 
     TestSuiteExecutionRequest:
       description: test suite execution request body
@@ -3140,6 +3258,11 @@ components:
           type: string
           description: https proxy for executor containers
           example: user:pass@my.proxy.server:8081
+        timeout:
+          type: integer
+          format: int32
+          description: duration in seconds the test suite may be active, until its stopped
+          example: 1
 
     TestUpsertRequest:
       description: test create request body
@@ -3346,6 +3469,8 @@ components:
         - start-testsuite
         - end-testsuite-success
         - end-testsuite-failed
+        - end-testsuite-aborted
+        - end-testsuite-timeout
 
     EventResult:
       description: Listener result after sending particular event
@@ -3375,6 +3500,17 @@ components:
         latestExecution:
           $ref: "#/components/schemas/Execution"
 
+    TestWithExecutionSummary:
+      description: Test with latest Execution result summary
+      type: object
+      required:
+        - test
+      properties:
+        test:
+          $ref: "#/components/schemas/Test"
+        latestExecution:
+          $ref: "#/components/schemas/ExecutionSummary"          
+
     TestSuiteWithExecution:
       description: Test suite with latest execution result
       type: object
@@ -3385,6 +3521,17 @@ components:
           $ref: "#/components/schemas/TestSuite"
         latestExecution:
           $ref: "#/components/schemas/TestSuiteExecution"
+  
+    TestSuiteWithExecutionSummary:
+      description: Test suite with latest execution result
+      type: object
+      required:
+        - testSuite
+      properties:
+        testSuite:
+          $ref: "#/components/schemas/TestSuite"
+        latestExecution:
+          $ref: "#/components/schemas/TestSuiteExecutionSummary"          
 
     Config:
       description: Testkube API config data structure
@@ -3761,3 +3908,22 @@ components:
       schema:
         type: string
         description: Name of the object
+  requestBodies:
+    UploadsBody:
+      description: "Upload files request body data"
+      required: true
+      content:
+        multipart/form-data:
+           schema:
+              type: object
+              properties:
+                parentName:
+                  type: string
+                  example: "test-1"
+                parentType:
+                  enum:
+                   - test
+                   - execution
+                filePath:
+                  type: string
+                  example: folder/file.txt

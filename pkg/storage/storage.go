@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"io"
+
 	"github.com/kubeshop/testkube/pkg/api/v1/testkube"
 	"github.com/minio/minio-go/v7"
 )
@@ -13,4 +15,7 @@ type Client interface {
 	ListFiles(bucket string) ([]testkube.Artifact, error)
 	SaveFile(bucket, filePath string) error
 	DownloadFile(bucket, file string) (*minio.Object, error)
+	UploadFile(bucket string, filePath string, reader io.Reader, objectSize int64) error
+	PlaceFiles(buckets []string, prefix string) error
+	GetValidBucketName(parentType string, parentName string) string
 }

@@ -23,14 +23,15 @@ import (
 	testsourcesclientv1 "github.com/kubeshop/testkube-operator/client/testsources/v1"
 	testsuitesclientv2 "github.com/kubeshop/testkube-operator/client/testsuites/v2"
 	"github.com/kubeshop/testkube/internal/pkg/api"
-	"github.com/kubeshop/testkube/internal/pkg/api/config"
 	"github.com/kubeshop/testkube/internal/pkg/api/datefilter"
 	"github.com/kubeshop/testkube/internal/pkg/api/repository/result"
 	"github.com/kubeshop/testkube/internal/pkg/api/repository/testresult"
+	"github.com/kubeshop/testkube/pkg/config"
 	"github.com/kubeshop/testkube/pkg/event"
 	"github.com/kubeshop/testkube/pkg/event/kind/slack"
 	"github.com/kubeshop/testkube/pkg/event/kind/webhook"
 	ws "github.com/kubeshop/testkube/pkg/event/kind/websocket"
+	kubeexecutor "github.com/kubeshop/testkube/pkg/executor"
 	"github.com/kubeshop/testkube/pkg/executor/client"
 	"github.com/kubeshop/testkube/pkg/oauth"
 	"github.com/kubeshop/testkube/pkg/secret"
@@ -55,13 +56,13 @@ func NewTestkubeAPI(
 	clientset kubernetes.Interface,
 	testkubeClientset testkubeclientset.Interface,
 	testsourcesClient *testsourcesclientv1.TestSourcesClient,
-	configMap *config.ConfigMapConfig,
+	configMap config.Repository,
 	clusterId string,
 	eventsEmitter *event.Emitter,
 	executor client.Executor,
 	containerExecutor client.Executor,
 	metrics metrics.Metrics,
-	jobTemplates *JobTemplates,
+	templates kubeexecutor.Templates,
 	scheduler *scheduler.Scheduler,
 ) TestkubeAPI {
 
@@ -92,7 +93,7 @@ func NewTestkubeAPI(
 		ConfigMap:            configMap,
 		Executor:             executor,
 		ContainerExecutor:    containerExecutor,
-		jobTemplates:         jobTemplates,
+		templates:            templates,
 		scheduler:            scheduler,
 	}
 
@@ -131,8 +132,8 @@ type TestkubeAPI struct {
 	oauthParams          oauthParams
 	WebsocketLoader      *ws.WebsocketLoader
 	Events               *event.Emitter
-	ConfigMap            *config.ConfigMapConfig
-	jobTemplates         *JobTemplates
+	ConfigMap            config.Repository
+	templates            kubeexecutor.Templates
 	scheduler            *scheduler.Scheduler
 	Clientset            kubernetes.Interface
 }
@@ -239,7 +240,7 @@ func (s *TestkubeAPI) InitRoutes() {
 
 	tests.Get("/:id/executions", s.ListExecutionsHandler())
 	tests.Get("/:id/executions/:executionID", s.GetExecutionHandler())
-	tests.Delete("/:id/executions/:executionID", s.AbortExecutionHandler())
+	tests.Patch("/:id/executions/:executionID", s.AbortExecutionHandler())
 
 	testWithExecutions := s.Routes.Group("/test-with-executions")
 	testWithExecutions.Get("/", s.ListTestWithExecutionsHandler())
@@ -257,6 +258,7 @@ func (s *TestkubeAPI) InitRoutes() {
 	testsuites.Post("/:id/executions", s.ExecuteTestSuitesHandler())
 	testsuites.Get("/:id/executions", s.ListTestSuiteExecutionsHandler())
 	testsuites.Get("/:id/executions/:executionID", s.GetTestSuiteExecutionHandler())
+	testsuites.Patch("/:id/executions/:executionID", s.AbortTestSuiteExecutionHandler())
 
 	testsuites.Get("/:id/tests", s.ListTestSuiteTestsHandler())
 
@@ -266,6 +268,7 @@ func (s *TestkubeAPI) InitRoutes() {
 	testExecutions.Get("/", s.ListTestSuiteExecutionsHandler())
 	testExecutions.Post("/", s.ExecuteTestSuitesHandler())
 	testExecutions.Get("/:executionID", s.GetTestSuiteExecutionHandler())
+	testExecutions.Patch("/:executionID", s.AbortTestSuiteExecutionHandler())
 
 	testSuiteWithExecutions := s.Routes.Group("/test-suite-with-executions")
 	testSuiteWithExecutions.Get("/", s.ListTestSuiteWithExecutionsHandler())
@@ -308,6 +311,9 @@ func (s *TestkubeAPI) InitRoutes() {
 
 	debug := s.Routes.Group("/debug")
 	debug.Get("/listeners", s.GetDebugListenersHandler())
+
+	files := s.Routes.Group("/uploads")
+	files.Post("/", s.UploadFiles())
 
 	// mount everything on results
 	// TODO it should be named /api/ + dashboard refactor

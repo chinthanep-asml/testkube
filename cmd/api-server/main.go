@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"net"
@@ -14,15 +12,12 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	executorv1 "github.com/kubeshop/testkube-operator/apis/executor/v1"
 	"github.com/kubeshop/testkube/internal/app/api/metrics"
 	"github.com/kubeshop/testkube/pkg/agent"
-	"github.com/kubeshop/testkube/pkg/api/v1/testkube"
+	kubeexecutor "github.com/kubeshop/testkube/pkg/executor"
 	"github.com/kubeshop/testkube/pkg/executor/client"
 	"github.com/kubeshop/testkube/pkg/executor/containerexecutor"
 	"github.com/pkg/errors"
-	k8serrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/kubeshop/testkube/pkg/event"
 	"github.com/kubeshop/testkube/pkg/event/bus"
@@ -44,11 +39,11 @@ import (
 	apiv1 "github.com/kubeshop/testkube/internal/app/api/v1"
 	"github.com/kubeshop/testkube/internal/migrations"
 	"github.com/kubeshop/testkube/internal/pkg/api"
-	configmap "github.com/kubeshop/testkube/internal/pkg/api/config"
 	configmongo "github.com/kubeshop/testkube/internal/pkg/api/repository/config"
 	"github.com/kubeshop/testkube/internal/pkg/api/repository/result"
 	"github.com/kubeshop/testkube/internal/pkg/api/repository/storage"
 	"github.com/kubeshop/testkube/internal/pkg/api/repository/testresult"
+	configmap "github.com/kubeshop/testkube/pkg/config"
 	"github.com/kubeshop/testkube/pkg/envs"
 	"github.com/kubeshop/testkube/pkg/log"
 	"github.com/kubeshop/testkube/pkg/migrator"
@@ -135,8 +130,8 @@ func main() {
 	testsuitesClient := testsuitesclientv2.NewClient(kubeClient, namespace)
 	testsourcesClient := testsourcesclientv1.NewClient(kubeClient, namespace)
 
-	resultsRepository := result.NewMongoRespository(db)
-	testResultsRepository := testresult.NewMongoRespository(db)
+	resultsRepository := result.NewMongoRespository(db, true)
+	testResultsRepository := testresult.NewMongoRespository(db, true)
 	configRepository := configmongo.NewMongoRespository(db)
 	configName := fmt.Sprintf("testkube-api-server-config-%s", namespace)
 	if os.Getenv("APISERVER_CONFIG") != "" {
@@ -204,19 +199,41 @@ func main() {
 
 	metrics := metrics.NewMetrics()
 
-	executor, err := newExecutorClient(resultsRepository, executorsClient, eventsEmitter, metrics, namespace)
+	templates, err := kubeexecutor.NewTemplatesFromEnv("TESTKUBE_TEMPLATE")
 	if err != nil {
-		ui.ExitOnError("Creating executor client")
+		ui.ExitOnError("Creating job templates", err)
 	}
 
-	jobTemplates, err := apiv1.NewJobTemplatesFromEnv("TESTKUBE_TEMPLATE")
-	if err != nil {
-		ui.ExitOnError("Creating job templates")
+	readOnlyExecutors := false
+	if value, ok := os.LookupEnv("TESTKUBE_READONLY_EXECUTORS"); ok {
+		readOnlyExecutors, err = strconv.ParseBool(value)
+		if err != nil {
+			ui.ExitOnError("error parsing as bool envvar: TESTKUBE_READONLY_EXECUTORS", err)
+		}
 	}
 
-	containerExecutor, err := newContainerExecutor(resultsRepository, executorsClient, eventsEmitter, metrics, namespace)
+	defaultExecutors := os.Getenv("TESTKUBE_DEFAULT_EXECUTORS")
+	images, err := kubeexecutor.SyncDefaultExecutors(executorsClient, namespace, defaultExecutors, readOnlyExecutors)
 	if err != nil {
-		ui.ExitOnError("Creating container executor")
+		ui.ExitOnError("Sync default executors", err)
+	}
+
+	serviceAccountName := os.Getenv("JOB_SERVICE_ACCOUNT_NAME")
+	executor, err := client.NewJobExecutor(resultsRepository, namespace, images, templates,
+		serviceAccountName, metrics, eventsEmitter, configMapConfig)
+	if err != nil {
+		ui.ExitOnError("Creating executor client", err)
+	}
+
+	containerTemplates, err := kubeexecutor.NewTemplatesFromEnv("TESTKUBE_CONTAINER_TEMPLATE")
+	if err != nil {
+		ui.ExitOnError("Creating container job templates", err)
+	}
+
+	containerExecutor, err := containerexecutor.NewContainerExecutor(resultsRepository, namespace, images, containerTemplates,
+		serviceAccountName, metrics, eventsEmitter, configMapConfig)
+	if err != nil {
+		ui.ExitOnError("Creating container executor", err)
 	}
 
 	scheduler := scheduler.NewScheduler(
@@ -232,6 +249,7 @@ func main() {
 		secretClient,
 		eventsEmitter,
 		log.DefaultLogger,
+		configMapConfig,
 	)
 
 	api := apiv1.NewTestkubeAPI(
@@ -252,7 +270,7 @@ func main() {
 		executor,
 		containerExecutor,
 		metrics,
-		jobTemplates,
+		templates,
 		scheduler,
 	)
 
@@ -287,6 +305,7 @@ func main() {
 		testResultsRepository,
 		triggers.NewMongoLeaseBackend(db),
 		log.DefaultLogger,
+		configMapConfig,
 		triggers.WithHostnameIdentifier(),
 	)
 	log.DefaultLogger.Info("starting trigger service")
@@ -311,134 +330,4 @@ func main() {
 	if err := g.Wait(); err != nil {
 		log.DefaultLogger.Fatalf("Testkube is shutting down: %v", err)
 	}
-}
-
-func newContainerExecutor(
-	testExecutionResults result.Repository,
-	executorsClient executorsclientv1.Interface,
-	eventsEmitter *event.Emitter,
-	metrics metrics.Metrics,
-	namespace string,
-) (executor client.Executor, err error) {
-	readOnlyExecutors := false
-	if value, ok := os.LookupEnv("TESTKUBE_READONLY_EXECUTORS"); ok {
-		readOnlyExecutors, err = strconv.ParseBool(value)
-		if err != nil {
-			return nil, errors.WithMessage(err, "error parsing as bool envvar: TESTKUBE_READONLY_EXECUTORS")
-		}
-	}
-
-	defaultExecutors := os.Getenv("TESTKUBE_DEFAULT_EXECUTORS")
-
-	initImage, err := loadDefaultExecutors(executorsClient, namespace, defaultExecutors, readOnlyExecutors)
-	if err != nil {
-		return nil, errors.WithMessage(err, "error loading default executors")
-	}
-
-	var jobTemplate string
-	jobTemplates, err := apiv1.NewJobTemplatesFromEnv("TESTKUBE_CONTAINER_TEMPLATE")
-	if err != nil {
-		jobTemplate = ""
-	} else {
-		jobTemplate = jobTemplates.Job
-	}
-
-	return containerexecutor.NewContainerExecutor(testExecutionResults, namespace, initImage, jobTemplate, metrics, eventsEmitter)
-}
-
-func newExecutorClient(
-	testExecutionResults result.Repository,
-	executorsClient executorsclientv1.Interface,
-	eventsEmitter *event.Emitter,
-	metrics metrics.Metrics,
-	namespace string,
-) (executor client.Executor, err error) {
-	readOnlyExecutors := false
-	if value, ok := os.LookupEnv("TESTKUBE_READONLY_EXECUTORS"); ok {
-		readOnlyExecutors, err = strconv.ParseBool(value)
-		if err != nil {
-			return nil, errors.WithMessage(err, "error parsing as bool envvar: TESTKUBE_READONLY_EXECUTORS")
-		}
-	}
-
-	defaultExecutors := os.Getenv("TESTKUBE_DEFAULT_EXECUTORS")
-	initImage, err := loadDefaultExecutors(executorsClient, namespace, defaultExecutors, readOnlyExecutors)
-	if err != nil {
-		return nil, errors.WithMessage(err, "error loading default executors")
-	}
-
-	jobTemplates, err := apiv1.NewJobTemplatesFromEnv("TESTKUBE_TEMPLATE")
-	if err != nil {
-		return nil, errors.WithMessage(err, "error creating job templates from envvars")
-	}
-
-	return client.NewJobExecutor(testExecutionResults, namespace, initImage, jobTemplates.Job, metrics, eventsEmitter)
-}
-
-// loadDefaultExecutors loads default executors
-func loadDefaultExecutors(executorsClient executorsclientv1.Interface, namespace, data string, readOnlyExecutors bool) (initImage string, err error) {
-	var executors []testkube.ExecutorDetails
-
-	if data == "" {
-		return "", nil
-	}
-
-	dataDecoded, err := base64.StdEncoding.DecodeString(data)
-	if err != nil {
-		return "", err
-	}
-
-	if err := json.Unmarshal(dataDecoded, &executors); err != nil {
-		return "", err
-	}
-
-	for _, executor := range executors {
-		if executor.Executor == nil {
-			continue
-		}
-
-		if executor.Name == "executor-init" {
-			initImage = executor.Executor.Image
-			continue
-		}
-
-		if readOnlyExecutors {
-			continue
-		}
-
-		var features []executorv1.Feature
-		for _, f := range executor.Executor.Features {
-			features = append(features, executorv1.Feature(f))
-		}
-
-		obj := &executorv1.Executor{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      executor.Name,
-				Namespace: namespace,
-			},
-			Spec: executorv1.ExecutorSpec{
-				Types:        executor.Executor.Types,
-				ExecutorType: executor.Executor.ExecutorType,
-				Image:        executor.Executor.Image,
-				Features:     features,
-			},
-		}
-
-		result, err := executorsClient.Get(executor.Name)
-		if err != nil && !k8serrors.IsNotFound(err) {
-			return "", err
-		}
-		if err != nil {
-			if _, err = executorsClient.Create(obj); err != nil {
-				return "", err
-			}
-		} else {
-			result.Spec = obj.Spec
-			if _, err = executorsClient.Update(result); err != nil {
-				return "", err
-			}
-		}
-	}
-
-	return initImage, nil
 }

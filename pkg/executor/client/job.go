@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"text/template"
 	"time"
@@ -19,13 +20,16 @@ import (
 	"k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/kubernetes"
 
+	"github.com/kubeshop/testkube/internal/pkg/api"
 	"github.com/kubeshop/testkube/internal/pkg/api/repository/result"
 	"github.com/kubeshop/testkube/pkg/api/v1/testkube"
+	"github.com/kubeshop/testkube/pkg/config"
 	"github.com/kubeshop/testkube/pkg/event"
 	"github.com/kubeshop/testkube/pkg/executor"
 	"github.com/kubeshop/testkube/pkg/executor/output"
 	"github.com/kubeshop/testkube/pkg/k8sclient"
 	"github.com/kubeshop/testkube/pkg/log"
+	"github.com/kubeshop/testkube/pkg/telemetry"
 	"github.com/kubeshop/testkube/pkg/utils"
 )
 
@@ -49,21 +53,24 @@ const (
 )
 
 // NewJobExecutor creates new job executor
-func NewJobExecutor(repo result.Repository, namespace, initImage, jobTemplate string, metrics ExecutionCounter, emiter *event.Emitter) (client *JobExecutor, err error) {
+func NewJobExecutor(repo result.Repository, namespace string, images executor.Images, templates executor.Templates,
+	serviceAccountName string, metrics ExecutionCounter, emiter *event.Emitter, configMap config.Repository) (client *JobExecutor, err error) {
 	clientSet, err := k8sclient.ConnectToK8s()
 	if err != nil {
 		return client, err
 	}
 
 	return &JobExecutor{
-		ClientSet:   clientSet,
-		Repository:  repo,
-		Log:         log.DefaultLogger,
-		Namespace:   namespace,
-		initImage:   initImage,
-		jobTemplate: jobTemplate,
-		metrics:     metrics,
-		Emitter:     emiter,
+		ClientSet:          clientSet,
+		Repository:         repo,
+		Log:                log.DefaultLogger,
+		Namespace:          namespace,
+		images:             images,
+		templates:          templates,
+		serviceAccountName: serviceAccountName,
+		metrics:            metrics,
+		Emitter:            emiter,
+		configMap:          configMap,
 	}, nil
 }
 
@@ -73,15 +80,17 @@ type ExecutionCounter interface {
 
 // JobExecutor is container for managing job executor dependencies
 type JobExecutor struct {
-	Repository  result.Repository
-	Log         *zap.SugaredLogger
-	ClientSet   *kubernetes.Clientset
-	Namespace   string
-	Cmd         string
-	initImage   string
-	jobTemplate string
-	metrics     ExecutionCounter
-	Emitter     *event.Emitter
+	Repository         result.Repository
+	Log                *zap.SugaredLogger
+	ClientSet          *kubernetes.Clientset
+	Namespace          string
+	Cmd                string
+	images             executor.Images
+	templates          executor.Templates
+	serviceAccountName string
+	metrics            ExecutionCounter
+	Emitter            *event.Emitter
+	configMap          config.Repository
 }
 
 type JobOptions struct {
@@ -101,6 +110,7 @@ type JobOptions struct {
 	TokenSecret           *testkube.SecretRef
 	Variables             map[string]testkube.Variable
 	ActiveDeadlineSeconds int64
+	ServiceAccountName    string
 }
 
 // Logs returns job logs stream channel using kubernetes api
@@ -251,8 +261,7 @@ func (c JobExecutor) MonitorJobForTimeout(ctx context.Context, jobName string) {
 // CreateJob creates new Kubernetes job based on execution and execute options
 func (c JobExecutor) CreateJob(ctx context.Context, execution testkube.Execution, options ExecuteOptions) error {
 	jobs := c.ClientSet.BatchV1().Jobs(c.Namespace)
-
-	jobOptions, err := NewJobOptions(c.initImage, c.jobTemplate, execution, options)
+	jobOptions, err := NewJobOptions(c.images.Init, c.templates.Job, c.serviceAccountName, execution, options)
 	if err != nil {
 		return err
 	}
@@ -340,6 +349,50 @@ func (c JobExecutor) stopExecution(ctx context.Context, l *zap.SugaredLogger, ex
 
 	c.metrics.IncExecuteTest(*execution)
 	c.Emitter.Notify(eventToSend)
+
+	telemetryEnabled, err := c.configMap.GetTelemetryEnabled(ctx)
+	if err != nil {
+		l.Debugw("getting telemetry enabled error", "error", err)
+	}
+
+	if !telemetryEnabled {
+		return
+	}
+
+	clusterID, err := c.configMap.GetUniqueClusterId(ctx)
+	if err != nil {
+		l.Debugw("getting cluster id error", "error", err)
+	}
+
+	host, err := os.Hostname()
+	if err != nil {
+		l.Debugw("getting hostname error", "hostname", host, "error", err)
+	}
+
+	var dataSource string
+	if execution.Content != nil {
+		dataSource = execution.Content.Type_
+	}
+
+	status := ""
+	if execution.ExecutionResult != nil && execution.ExecutionResult.Status != nil {
+		status = string(*execution.ExecutionResult.Status)
+	}
+
+	out, err := telemetry.SendRunEvent("testkube_api_run_test", telemetry.RunParams{
+		AppVersion: api.Version,
+		DataSource: dataSource,
+		Host:       host,
+		ClusterID:  clusterID,
+		TestType:   execution.TestType,
+		DurationMs: execution.DurationMs,
+		Status:     status,
+	})
+	if err != nil {
+		l.Debugw("sending run test telemetry event error", "error", err)
+	} else {
+		l.Debugw("sending run test telemetry event", "output", out)
+	}
 }
 
 // NewJobOptionsFromExecutionOptions compose JobOptions based on ExecuteOptions
@@ -556,7 +609,7 @@ func NewJobSpec(log *zap.SugaredLogger, options JobOptions) (*batchv1.Job, error
 	return &job, nil
 }
 
-func NewJobOptions(initImage, jobTemplate string, execution testkube.Execution, options ExecuteOptions) (jobOptions JobOptions, err error) {
+func NewJobOptions(initImage, jobTemplate string, serviceAccountName string, execution testkube.Execution, options ExecuteOptions) (jobOptions JobOptions, err error) {
 	jsn, err := json.Marshal(execution)
 	if err != nil {
 		return jobOptions, err
@@ -573,5 +626,6 @@ func NewJobOptions(initImage, jobTemplate string, execution testkube.Execution, 
 	}
 	jobOptions.Variables = execution.Variables
 	jobOptions.ImagePullSecrets = options.ImagePullSecretNames
+	jobOptions.ServiceAccountName = serviceAccountName
 	return
 }

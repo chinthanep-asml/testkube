@@ -18,6 +18,7 @@ import (
 	"github.com/kubeshop/testkube/pkg/api/v1/testkube"
 	"github.com/kubeshop/testkube/pkg/crd"
 	testsmapper "github.com/kubeshop/testkube/pkg/mapper/tests"
+	testsuiteexecutionsmapper "github.com/kubeshop/testkube/pkg/mapper/testsuiteexecutions"
 	testsuitesmapper "github.com/kubeshop/testkube/pkg/mapper/testsuites"
 	"github.com/kubeshop/testkube/pkg/types"
 	"github.com/kubeshop/testkube/pkg/workerpool"
@@ -405,7 +406,7 @@ func (s TestkubeAPI) ListTestSuiteWithExecutionsHandler() fiber.Handler {
 		}
 
 		ctx := c.Context()
-		results := make([]testkube.TestSuiteWithExecution, 0, len(testSuites))
+		results := make([]testkube.TestSuiteWithExecutionSummary, 0, len(testSuites))
 		testSuiteNames := make([]string, len(testSuites))
 		for i := range testSuites {
 			testSuiteNames[i] = testSuites[i].Name
@@ -418,12 +419,12 @@ func (s TestkubeAPI) ListTestSuiteWithExecutionsHandler() fiber.Handler {
 
 		for i := range testSuites {
 			if execution, ok := executionMap[testSuites[i].Name]; ok {
-				results = append(results, testkube.TestSuiteWithExecution{
+				results = append(results, testkube.TestSuiteWithExecutionSummary{
 					TestSuite:       &testSuites[i],
-					LatestExecution: &execution,
+					LatestExecution: testsuiteexecutionsmapper.MapToSummary(&execution),
 				})
 			} else {
-				results = append(results, testkube.TestSuiteWithExecution{
+				results = append(results, testkube.TestSuiteWithExecutionSummary{
 					TestSuite: &testSuites[i],
 				})
 			}
@@ -466,6 +467,36 @@ func (s TestkubeAPI) ListTestSuiteWithExecutionsHandler() fiber.Handler {
 				}
 
 				results = append(results[:i], results[i+1:]...)
+			}
+		}
+
+		var page, pageSize int
+		pageParam := c.Query("page", "")
+		if pageParam != "" {
+			pageSize = testresult.PageDefaultLimit
+			page, err = strconv.Atoi(pageParam)
+			if err != nil {
+				return s.Error(c, http.StatusBadRequest, fmt.Errorf("test suite page filter invalid: %w", err))
+			}
+		}
+
+		pageSizeParam := c.Query("pageSize", "")
+		if pageSizeParam != "" {
+			pageSize, err = strconv.Atoi(pageSizeParam)
+			if err != nil {
+				s.Error(c, http.StatusBadRequest, fmt.Errorf("test suite page size filter invalid: %w", err))
+			}
+		}
+
+		if pageParam != "" || pageSizeParam != "" {
+			startPos := page * pageSize
+			endPos := (page + 1) * pageSize
+			if startPos < len(results) {
+				if endPos > len(results) {
+					endPos = len(results)
+				}
+
+				results = results[startPos:endPos]
 			}
 		}
 
@@ -601,6 +632,33 @@ func (s TestkubeAPI) GetTestSuiteExecutionHandler() fiber.Handler {
 		}
 
 		return c.JSON(execution)
+	}
+}
+
+func (s TestkubeAPI) AbortTestSuiteExecutionHandler() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		s.Log.Infow("aborting test suite execution", "executionID", c.Params("executionID"))
+		ctx := context.Background()
+		id := c.Params("executionID")
+		execution, err := s.TestExecutionResults.Get(ctx, id)
+		if err == mongo.ErrNoDocuments {
+			execution, err = s.TestExecutionResults.GetByName(ctx, id)
+			if err == mongo.ErrNoDocuments {
+				return s.Error(c, http.StatusNotFound, fmt.Errorf("test suite with execution id/name %s not found", id))
+			}
+		}
+		if err != nil {
+			return s.Error(c, http.StatusBadRequest, err)
+		}
+
+		execution.Status = testkube.TestSuiteExecutionStatusAborting
+		err = s.TestExecutionResults.Update(ctx, execution)
+
+		if err != nil {
+			return s.Error(c, http.StatusBadRequest, err)
+		}
+
+		return c.Status(http.StatusNoContent).SendString("")
 	}
 }
 

@@ -44,7 +44,7 @@ func mapEvent(userID string, event Event) analytics.Track {
 }
 
 func mapProperties(params Params) analytics.Properties {
-	return analytics.NewProperties().
+	properties := analytics.NewProperties().
 		Set("name", params.AppName).
 		Set("version", params.AppVersion).
 		Set("arch", params.Architecture).
@@ -53,4 +53,30 @@ func mapProperties(params Params) analytics.Properties {
 		Set("eventCategory", params.EventCategory).
 		Set("host", params.Host).
 		Set("machineId", params.MachineID)
+
+	if params.DataSource != "" {
+		properties = properties.Set("dataSource", params.DataSource)
+	}
+
+	if params.TestType != "" {
+		properties = properties.Set("testType", params.TestType)
+	}
+
+	if params.DurationMs != 0 {
+		properties = properties.Set("durationMs", params.DurationMs)
+	}
+
+	if params.Status != "" {
+		properties = properties.Set("status", params.Status)
+	}
+
+	if params.TestSource != "" {
+		properties = properties.Set("testSource", params.TestSource)
+	}
+
+	if params.TestSuiteSteps != 0 {
+		properties = properties.Set("testSuiteSteps", params.TestSuiteSteps)
+	}
+
+	return properties
 }

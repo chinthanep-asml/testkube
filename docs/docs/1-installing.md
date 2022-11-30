@@ -26,7 +26,8 @@ brew install testkube
 ```
 ### **Windows**
 ```bash
-choco source add --name=testkube_repo --source=http://chocolatey.testkube.io/chocolatey  choco install testkube
+choco source add --name=kubeshop_repo --source=https://chocolatey.kubeshop.io/chocolatey  
+choco install testkube -y
 ```
 ### **Linux**
 ```bash
@@ -53,7 +54,7 @@ To deploy Testkube to your K8s cluster you will need the following packages inst
 
 
 ### **Using Testkube's CLI to Deploy the Server Components**
-The Testkube CLI provides a command to easly deploy the Testkube server components to your cluster.
+The Testkube CLI provides a command to easily deploy the Testkube server components to your cluster.
 Run:
 ```bash
 testkube init
@@ -66,8 +67,8 @@ The above command will install the following components in your Kubernetes clust
 2. `testkube` namespace
 3. CRDs for Tests, TestSuites, Executors
 4. MongoDB
-5. Minio - default (can be disabled with `--no-minio` flag if you want to use S3 buckets)
-6. Dashboard - default (can be disabled with `--no-dasboard` flag)
+5. Minio - default (can be disabled with `--no-minio`)
+6. Dashboard - default (can be disabled with `--no-dashboard` flag)
 
 
 Confirm that Testkube is running:
@@ -94,7 +95,7 @@ testkube` to see the charts.
 helm install --create-namespace my-testkube testkube/testkube
 ```
 
-Please note that, by default, the namespace for the intstallation will be `testkube`. If the `testkube` namespace does not exist, it will be created for you.
+Please note that, by default, the namespace for the installation will be `testkube`. If the `testkube` namespace does not exist, it will be created for you.
 
 If you wish to install into a different namespace, please use following command:
 
@@ -141,6 +142,7 @@ The following Helm defaults are used in the `testkube` chart:
 | testkube-api.storage.scrapperEnabled | yes         | true                                 |
 | testkube-api.slackToken              | yes         | ""                                   |
 | testkube-api.slackChannelId          | yes         | ""                                   |
+| testkube-api.jobServiceAccountName   | yes         | ""                                   |
 
 >For more configuration parameters of `MongoDB` chart please visit:
 <https://github.com/bitnami/charts/tree/master/bitnami/mongodb#parameters>
@@ -200,4 +202,25 @@ helm install testkube-mongodb bitnami/mongodb --namespace=testkube --values valu
 helm install --create-namespace --namespace testkube testkube testkube/testkube --set mongodb.enabled=false --set testkube-dashboard.service.port=8080
 ```
 
-Please notice that since we've just installed MongoDB with `testkube-mongodb` helm release name, it'll allow us to not reconfigure Testkube API MongoDB connection URI. If you've installed with a different name/namespace, please adjust `--set testkube-api.mongodb.dsn: "mongodb://testkube-mongodb:27017"` to your MongoDB service.
+Please notice that since we've just installed MongoDB with a `testkube-mongodb` Helm release name, you are not required to reconfigure the Testkube API MongoDB connection URI. If you've installed with a different name/namespace, please adjust `--set testkube-api.mongodb.dsn: "mongodb://testkube-mongodb:27017"` to your MongoDB service.
+
+## Installation with S3 Storage and IAM Authentication
+
+To use S3 as storage, the steps are as follows:
+
+1. Create a ServiceAccount with the ARN specified.
+e.g.
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::265500248336:role/minio-example
+  name: s3-access
+  namespace: testkube
+```
+
+2. In the Helm values.yaml file, link the ServiceAccount to the `testkube-api.minio.serviceAccountName` and to `testkube-api.jobServiceAccountName` then leave `minio.minioRootUser` and `minio.minioRootPassword` empty.
+
+3. Install using Helm and the values file with the above modifications.
