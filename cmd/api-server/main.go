@@ -173,6 +173,7 @@ func main() {
 		ui.ExitOnError("Running server migrations", err)
 	}
 
+	log.DefaultLogger.Infow("MULTITENANCY Creating k8sclient")
 	clientset, err := k8sclient.ConnectToK8s()
 	if err != nil {
 		ui.ExitOnError("Creating k8s clientset", err)

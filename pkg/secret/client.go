@@ -35,6 +35,7 @@ type Client struct {
 
 // NewClient is a method to create new secret client
 func NewClient(namespace string) (*Client, error) {
+	log.DefaultLogger.Infow("MULTITENANCY Creating k8sclient")
 	clientSet, err := k8sclient.ConnectToK8s()
 	if err != nil {
 		return nil, err

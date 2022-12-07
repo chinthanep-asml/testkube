@@ -10,6 +10,7 @@ import (
 	"github.com/kubeshop/testkube/internal/pkg/api"
 	"github.com/kubeshop/testkube/pkg/api/v1/testkube"
 	"github.com/kubeshop/testkube/pkg/k8sclient"
+	"github.com/kubeshop/testkube/pkg/log"
 	"github.com/kubeshop/testkube/pkg/oauth"
 )
 
@@ -76,6 +77,8 @@ func (s TestkubeAPI) RoutesHandler() fiber.Handler {
 // DebugHandler is a handler to get debug information
 func (s TestkubeAPI) DebugHandler() fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		log.DefaultLogger.Infow("MULTITENANCY Creating k8sclient")
+		/*clientSet, err := k8sclient.ConnectToK8sExecutor()*/
 		clientSet, err := k8sclient.ConnectToK8s()
 		if err != nil {
 			return s.Error(c, http.StatusInternalServerError, fmt.Errorf("could not connect to cluster: %w", err))

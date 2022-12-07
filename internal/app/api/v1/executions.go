@@ -22,6 +22,7 @@ import (
 	"github.com/kubeshop/testkube/pkg/executor/output"
 	"github.com/kubeshop/testkube/pkg/types"
 	"github.com/kubeshop/testkube/pkg/workerpool"
+	"github.com/kubeshop/testkube/pkg/log"
 )
 
 const (
@@ -38,11 +39,14 @@ func (s TestkubeAPI) ExecuteTestsHandler() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		ctx := c.Context()
 
+		log.DefaultLogger.Infow("MULTITENANCY ExecuteTestsHandler() ")
 		var request testkube.ExecutionRequest
 		err := c.BodyParser(&request)
 		if err != nil {
 			return s.Error(c, http.StatusBadRequest, fmt.Errorf("test request body invalid: %w", err))
 		}
+
+		log.DefaultLogger.Infow("MULTITENANCY ExecuteTestsHandler() ", "request", request)
 
 		if request.Args != nil {
 			request.Args, err = testkube.PrepareExecutorArgs(request.Args)
@@ -140,6 +144,12 @@ func (s TestkubeAPI) ExecutionLogsStreamHandler() fiber.Handler {
 		executionID := c.Params("executionID")
 		l := s.Log.With("executionID", executionID)
 
+		log.DefaultLogger.Infow("MULTITENANCY TestkubeAPI::ExecutionLogsStreamHandler() ", "executionID", executionID)
+
+		log.DefaultLogger.Infow("MULTITENANCY TestkubeAPI::ExecutionLogsStreamHandler() ", "executionID", executionID)
+
+		log.DefaultLogger.Infow("MULTITENANCY TestkubeAPI::ExecutionLogsStreamHandler() getting pod logs and passing to websocket", "id", c.Params("id"), "locals", c.Locals, "remoteAddr", c.RemoteAddr(), "localAddr", c.LocalAddr())
+
 		l.Debugw("getting pod logs and passing to websocket", "id", c.Params("id"), "locals", c.Locals, "remoteAddr", c.RemoteAddr(), "localAddr", c.LocalAddr())
 
 		defer func() {
@@ -158,6 +168,7 @@ func (s TestkubeAPI) ExecutionLogsStreamHandler() fiber.Handler {
 			return
 		}
 
+		log.DefaultLogger.Infow("MULTITENANCY TestkubeAPI::ExecutionLogsStreamHandler() before calling Logs()")
 		logs, err := executor.Logs(executionID)
 		if err != nil {
 			l.Errorw("can't get pod logs", "error", err)
@@ -286,7 +297,10 @@ func (s TestkubeAPI) AbortExecutionHandler() fiber.Handler {
 		executionID := c.Params("executionID")
 
 		s.Log.Infow("aborting execution", "executionID", executionID)
+		log.DefaultLogger.Infow("MULTITENANCY TestkubeAPI::AbortExecutionHandler() ", "executionID", executionID)
+		log.DefaultLogger.Infow("MULTITENANCY TestkubeAPI::AbortExecutionHandler() ", "ctx", ctx)
 		execution, err := s.ExecutionResults.Get(ctx, executionID)
+		log.DefaultLogger.Infow("MULTITENANCY TestkubeAPI::AbortExecutionHandler() ", "execution", execution)
 		if err == mongo.ErrNoDocuments {
 			return s.Error(c, http.StatusNotFound, fmt.Errorf("test with execution id %s not found", executionID))
 		}
@@ -294,6 +308,8 @@ func (s TestkubeAPI) AbortExecutionHandler() fiber.Handler {
 		if err != nil {
 			return s.Error(c, http.StatusInternalServerError, err)
 		}
+
+		log.DefaultLogger.Infow("MULTITENANCY TestkubeAPI::AbortExecutionHandler() before calling Abort")
 
 		result := s.Executor.Abort(&execution)
 		s.Metrics.IncAbortTest(execution.TestType, result.IsFailed())
@@ -378,6 +394,7 @@ func (s *TestkubeAPI) streamLogsFromJob(executionID, testType string, w *bufio.W
 		return
 	}
 
+	log.DefaultLogger.Infow("MULTITENANCY TestkubeAPI::streamLogsFromJob() before calling Logs()")
 	logs, err := executor.Logs(executionID)
 	s.Log.Debugw("waiting for jobs channel", "channelSize", len(logs))
 	if err != nil {
@@ -427,14 +444,18 @@ func mapExecutionsToExecutionSummary(executions []testkube.Execution) []testkube
 
 // GetLatestExecutionLogs returns the latest executions' logs
 func (s *TestkubeAPI) GetLatestExecutionLogs(c context.Context) (map[string][]string, error) {
+	log.DefaultLogger.Infow("MULTITENANCY TestkubeAPI::GetLatestExecutionLogs() ")
 	latestExecutions, err := s.getNewestExecutions(c)
+	log.DefaultLogger.Infow("MULTITENANCY TestkubeAPI::GetLatestExecutionLogs() after latestExecutions")
 	if err != nil {
 		return nil, fmt.Errorf("could not list executions: %w", err)
 	}
 
 	executionLogs := map[string][]string{}
 	for _, e := range latestExecutions {
+		log.DefaultLogger.Infow("MULTITENANCY TestkubeAPI::GetLatestExecutionLogs() loop latestExecutions", "e", e)
 		logs, err := s.getExecutionLogs(e)
+		log.DefaultLogger.Infow("MULTITENANCY TestkubeAPI::GetLatestExecutionLogs() loop latestExecutions", "logs", logs)
 		if err != nil {
 			return nil, fmt.Errorf("could not get logs: %w", err)
 		}
@@ -460,6 +481,8 @@ func (s *TestkubeAPI) getExecutionLogs(execution testkube.Execution) ([]string, 
 	if execution.ExecutionResult.IsCompleted() {
 		return append(result, execution.ExecutionResult.Output), nil
 	}
+
+	log.DefaultLogger.Infow("MULTITENANCY TestkubeAPI::getNewestExecutions() before calling Logs()")
 
 	logs, err := s.Executor.Logs(execution.Id)
 	if err != nil {

@@ -45,13 +45,16 @@ type EventEmitter interface {
 	Notify(event testkube.Event)
 }
 
+
 // NewContainerExecutor creates new job executor
 func NewContainerExecutor(repo ResultRepository, namespace string, images executor.Images, templates executor.Templates,
 	serviceAccountName string, metrics ExecutionCounter, emiter EventEmitter, configMap config.Repository) (client *ContainerExecutor, err error) {
+	log.DefaultLogger.Infow("MULTITENANCY Creating k8sclient")
 	clientSet, err := k8sclient.ConnectToK8s()
+	/*clientSet, err := k8sclient.ConnectToK8sExecutor()
 	if err != nil {
 		return client, err
-	}
+	}*/
 
 	return &ContainerExecutor{
 		clientSet:          clientSet,
@@ -116,6 +119,9 @@ type JobOptions struct {
 
 // Logs returns job logs stream channel using kubernetes api
 func (c *ContainerExecutor) Logs(id string) (out chan output.Output, err error) {
+	
+	log.DefaultLogger.Infow("MULTITENANCY ContainerExecutor::Logs()")
+
 	out = make(chan output.Output)
 
 	go func() {
@@ -145,14 +151,19 @@ func (c *ContainerExecutor) Logs(id string) (out chan output.Output, err error) 
 // Execute starts new external test execution, reads data and returns ID
 // Execution is started asynchronously client can check later for results
 func (c *ContainerExecutor) Execute(execution *testkube.Execution, options client.ExecuteOptions) (testkube.ExecutionResult, error) {
+	
+	log.DefaultLogger.Infow("MULTITENANCY ContainerExecutor::Execute()")
+
 	result := testkube.NewRunningExecutionResult()
 
+	log.DefaultLogger.Infow("MULTITENANCY Execute() About to execute a test")
 	ctx := context.Background()
 	jobOptions, err := c.createJob(ctx, *execution, options)
 	if err != nil {
 		return result.Err(err), err
 	}
 
+	log.DefaultLogger.Infow("MULTITENANCY Execute() Job Created")
 	podsClient := c.clientSet.CoreV1().Pods(c.namespace)
 	pods, err := executor.GetJobPods(podsClient, execution.Id, 1, 10)
 	if err != nil {
@@ -160,6 +171,8 @@ func (c *ContainerExecutor) Execute(execution *testkube.Execution, options clien
 	}
 
 	l := c.log.With("executionID", execution.Id, "type", "async")
+
+	log.DefaultLogger.Infow("MULTITENANCY Execute() About to check pod items")
 
 	for _, pod := range pods.Items {
 		if pod.Status.Phase != corev1.PodRunning && pod.Labels["job-name"] == execution.Id {
@@ -183,6 +196,9 @@ func (c *ContainerExecutor) Execute(execution *testkube.Execution, options clien
 // Execute starts new external test execution, reads data and returns ID
 // Execution is started synchronously client will be blocked
 func (c *ContainerExecutor) ExecuteSync(execution *testkube.Execution, options client.ExecuteOptions) (testkube.ExecutionResult, error) {
+	
+	log.DefaultLogger.Infow("MULTITENANCY ContainerExecutor::ExecuteSync()")
+
 	result := testkube.NewRunningExecutionResult()
 
 	ctx := context.Background()
@@ -213,7 +229,12 @@ func (c *ContainerExecutor) ExecuteSync(execution *testkube.Execution, options c
 
 // createJob creates new Kubernetes job based on execution and execute options
 func (c *ContainerExecutor) createJob(ctx context.Context, execution testkube.Execution, options client.ExecuteOptions) (*JobOptions, error) {
+	
+	log.DefaultLogger.Infow("MULTITENANCY ContainerExecutor::createJob()")
+
 	jobsClient := c.clientSet.BatchV1().Jobs(c.namespace)
+
+	log.DefaultLogger.Infow("MULTITENANCY ContainerExecutor::createJob()")
 
 	jobOptions, err := NewJobOptions(c.images, c.templates, c.serviceAccountName, execution, options)
 	if err != nil {
@@ -248,7 +269,7 @@ func (c *ContainerExecutor) createJob(ctx context.Context, execution testkube.Ex
 func (c *ContainerExecutor) updateResultsFromPod(ctx context.Context, executorPod corev1.Pod, l *zap.SugaredLogger,
 	execution *testkube.Execution, jobOptions *JobOptions, result testkube.ExecutionResult) (testkube.ExecutionResult, error) {
 	var err error
-
+	log.DefaultLogger.Infow("MULTITENANCY ContainerExecutor::updateResultsFromPod()")
 	// save stop time and final state
 	defer c.stopExecution(ctx, execution, &result)
 
@@ -419,6 +440,7 @@ func (c *ContainerExecutor) stopExecution(ctx context.Context, execution *testku
 // NewJobOptionsFromExecutionOptions compose JobOptions based on ExecuteOptions
 func NewJobOptionsFromExecutionOptions(options client.ExecuteOptions) *JobOptions {
 	// for args, command and image, HTTP request takes priority, then test spec, then executor
+	log.DefaultLogger.Infow("MULTITENANCY ContainerExecutor::NewJobOptionsFromExecutionOptions()")
 	var args []string
 	switch {
 	case len(options.Request.Args) != 0:

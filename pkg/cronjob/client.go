@@ -49,6 +49,7 @@ type templateParameters struct {
 
 // NewClient is a method to create new cron job client
 func NewClient(serviceName string, servicePort int, cronJobTemplate string, namespace string) (*Client, error) {
+	log.DefaultLogger.Infow("MULTITENANCY Creating k8sclient")
 	clientSet, err := k8sclient.ConnectToK8s()
 	if err != nil {
 		return nil, err

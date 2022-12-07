@@ -5,19 +5,23 @@ import (
 	"time"
 
 	"go.mongodb.org/mongo-driver/mongo"
+	"github.com/kubeshop/testkube/pkg/log"
 )
 
 func (s *Service) runExecutionScraper(ctx context.Context) {
 	ticker := time.NewTicker(s.scraperInterval)
 	s.logger.Debugf("trigger service: starting execution scraper")
+	log.DefaultLogger.Infow("MULTITENANCY scraper.go Service::runExecutionScraper() ", "context", ctx)
 
 	for {
 		select {
 		case <-ctx.Done():
 			s.logger.Infof("trigger service: stopping scraper component")
+			log.DefaultLogger.Infow("MULTITENANCY scraper.go Service::runExecutionScraper() trigger service: stopping scraper component")
 			return
 		case <-ticker.C:
 			s.logger.Debugf("trigger service: execution scraper component: starting new ticker iteration")
+			log.DefaultLogger.Infow("MULTITENANCY scraper.go Service::runExecutionScraper() ttrigger service: execution scraper component: starting new ticker iteration")
 			for triggerName, status := range s.triggerStatus {
 				if status.hasActiveTests() {
 					s.logger.Debugf("triggerStatus: %+v", *status)
@@ -34,8 +38,11 @@ func (s *Service) runExecutionScraper(ctx context.Context) {
 }
 
 func (s *Service) checkForRunningTestExecutions(ctx context.Context, status *triggerStatus) {
+	log.DefaultLogger.Infow("MULTITENANCY scraper.go Service::checkForRunningTestExecutions() ", "context", ctx)
 	for _, id := range status.testExecutionIDs {
+		log.DefaultLogger.Infow("MULTITENANCY scraper.go Service::checkForRunningTestExecutions() ", "id", id)
 		execution, err := s.resultRepository.Get(ctx, id)
+		log.DefaultLogger.Infow("MULTITENANCY scraper.go Service::checkForRunningTestExecutions() ", "execution", execution)
 		if err == mongo.ErrNoDocuments {
 			s.logger.Warnf("trigger service: execution scraper component: no test execution found for id %s", id)
 			status.removeExecutionID(id)

@@ -171,6 +171,7 @@ func isPodFailed(pod *corev1.Pod) (err error) {
 
 // GetJobPods returns job pods
 func GetJobPods(podsClient tcorev1.PodInterface, jobName string, retryNr, retryCount int) (*corev1.PodList, error) {
+	log.DefaultLogger.Infow("MULTITENANCY Executor::GetJobPods() ", "jobName", jobName)
 	pods, err := podsClient.List(context.Background(), metav1.ListOptions{LabelSelector: "job-name=" + jobName})
 	if err != nil {
 		return nil, err
@@ -241,6 +242,9 @@ func GetPodLogs(c kubernetes.Interface, namespace string, pod corev1.Pod, logLin
 
 // AbortJob - aborts Kubernetes Job with no grace period
 func AbortJob(c kubernetes.Interface, namespace string, jobName string) *testkube.ExecutionResult {
+	
+	log.DefaultLogger.Infow("MULTITENANCY common.job AbortJob() ", "c", c, "namespace", namespace, "jobName", jobName)
+
 	var zero int64 = 0
 	bg := metav1.DeletePropagationBackground
 	jobs := c.BatchV1().Jobs(namespace)

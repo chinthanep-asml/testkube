@@ -11,6 +11,7 @@ import (
 	coreinformerv1 "k8s.io/client-go/informers/core/v1"
 	networkinginformerv1 "k8s.io/client-go/informers/networking/v1"
 	"k8s.io/client-go/kubernetes"
+	"github.com/kubeshop/testkube/pkg/log"
 
 	networkingv1 "k8s.io/api/networking/v1"
 
@@ -40,6 +41,7 @@ type k8sInformers struct {
 }
 
 func newK8sInformers(clientset kubernetes.Interface, testKubeClientset versioned.Interface) *k8sInformers {
+	log.DefaultLogger.Infow("MULTITENANCY watcher.go newK8sInformers() ", "clientset", clientset)
 	f := informers.NewSharedInformerFactory(clientset, 0)
 	podInformer := f.Core().V1().Pods()
 	deploymentInformer := f.Apps().V1().Deployments()
@@ -69,12 +71,15 @@ func newK8sInformers(clientset kubernetes.Interface, testKubeClientset versioned
 }
 
 func (s *Service) runWatcher(ctx context.Context, leaseChan chan bool) {
+	
+	log.DefaultLogger.Infow("MULTITENANCY Service::runWatcher() ", "context", ctx)
 	running := false
 	var stopChan chan struct{}
 
 	for {
 		select {
 		case <-ctx.Done():
+			log.DefaultLogger.Infow("MULTITENANCY Service::runWatcher() trigger service: stopping watcher component: context finished")
 			s.logger.Infof("trigger service: stopping watcher component: context finished")
 			if _, ok := <-stopChan; ok {
 				close(stopChan)
@@ -83,6 +88,7 @@ func (s *Service) runWatcher(ctx context.Context, leaseChan chan bool) {
 		case leased := <-leaseChan:
 			if !leased {
 				if running {
+					log.DefaultLogger.Infow("MULTITENANCY Service::runWatcher() trigger service: instance %s in cluster %s lost lease", s.identifier, s.clusterID)
 					s.logger.Infof("trigger service: instance %s in cluster %s lost lease", s.identifier, s.clusterID)
 					close(stopChan)
 					s.informers = nil
@@ -90,6 +96,7 @@ func (s *Service) runWatcher(ctx context.Context, leaseChan chan bool) {
 				}
 			} else {
 				if !running {
+					log.DefaultLogger.Infow("MULTITENANCY Service::runWatcher() trigger service: instance %s in cluster %s acquired lease", s.identifier, s.clusterID)
 					s.logger.Infof("trigger service: instance %s in cluster %s acquired lease", s.identifier, s.clusterID)
 					s.informers = newK8sInformers(s.clientset, s.testKubeClientset)
 					stopChan = make(chan struct{})
@@ -102,6 +109,7 @@ func (s *Service) runWatcher(ctx context.Context, leaseChan chan bool) {
 }
 
 func (s *Service) runInformers(ctx context.Context, stop <-chan struct{}) {
+	log.DefaultLogger.Infow("MULTITENANCY watcher.go Service::runInformers() ", "context", ctx)
 	if s.informers == nil {
 		s.logger.Errorf("trigger service: error running k8s informers: informers are nil")
 		return
@@ -117,25 +125,35 @@ func (s *Service) runInformers(ctx context.Context, stop <-chan struct{}) {
 	s.informers.testSuiteInformer.Informer().AddEventHandler(s.testSuiteEventHandler())
 	s.informers.testInformer.Informer().AddEventHandler(s.testEventHandler())
 
+	log.DefaultLogger.Infow("MULTITENANCY watcher.go Service::runInformers() trigger service: starting pod informer")
 	s.logger.Debugf("trigger service: starting pod informer")
 	go s.informers.podInformer.Informer().Run(stop)
+	log.DefaultLogger.Infow("MULTITENANCY watcher.go Service::runInformers() trigger service: starting deployment informer")
 	s.logger.Debugf("trigger service: starting deployment informer")
 	go s.informers.deploymentInformer.Informer().Run(stop)
+	log.DefaultLogger.Infow("MULTITENANCY watcher.go Service::runInformers() trigger service: starting daemonset informer")
 	s.logger.Debugf("trigger service: starting daemonset informer")
 	go s.informers.daemonsetInformer.Informer().Run(stop)
+	log.DefaultLogger.Infow("MULTITENANCY watcher.go Service::runInformers() trigger service: starting statefulset informer")
 	s.logger.Debugf("trigger service: starting statefulset informer")
 	go s.informers.statefulsetInformer.Informer().Run(stop)
+	log.DefaultLogger.Infow("MULTITENANCY watcher.go Service::runInformers() trigger service: starting service informer")
 	s.logger.Debugf("trigger service: starting service informer")
 	go s.informers.serviceInformer.Informer().Run(stop)
+	log.DefaultLogger.Infow("MULTITENANCY watcher.go Service::runInformers() trigger service: starting ingress informer")
 	s.logger.Debugf("trigger service: starting ingress informer")
 	go s.informers.ingressInformer.Informer().Run(stop)
+	log.DefaultLogger.Infow("MULTITENANCY watcher.go Service::runInformers() trigger service: starting cluster event informer")
 	s.logger.Debugf("trigger service: starting cluster event informer")
 	go s.informers.clusterEventInformer.Informer().Run(stop)
+	log.DefaultLogger.Infow("MULTITENANCY watcher.go Service::runInformers() trigger service: starting test trigger informer")
 	s.logger.Debugf("trigger service: starting test trigger informer")
 	go s.informers.testTriggerInformer.Informer().Run(stop)
+	log.DefaultLogger.Infow("MULTITENANCY watcher.go Service::runInformers() trigger service: starting test suite informer")
 	s.logger.Debugf("trigger service: starting test suite informer")
 	go s.informers.testSuiteInformer.Informer().Run(stop)
-	s.logger.Debugf("trigger service: starting test informer")
+	log.DefaultLogger.Infow("MULTITENANCY watcher.go Service::runInformers() trigger service: starting test suite informer")
+	s.logger.Debugf("trigger service: starting test suite informer")
 	go s.informers.testInformer.Informer().Run(stop)
 }
 

@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM --platform=$BUILDPLATFORM golang:1.18 AS build
+FROM --platform=linux/x86_64 golang:1.18 AS build
 WORKDIR /build
 COPY . .
 ENV CGO_ENABLED=0 
@@ -14,6 +14,11 @@ ARG SLACK_BOT_CLIENT_ID
 ARG SLACK_BOT_CLIENT_SECRET
 ARG TARGETOS TARGETARCH
 
+RUN HP=$HTTP_PROXY
+RUN HSP=$HTTPS_PROXY
+ENV HTTP_PROXY http://127.0.0.1:3128/
+ENV HTTPS_PROXY http://127.0.0.1:3128/
+
 RUN cd cmd/api-server; \
     GOOS=$TARGETOS GOARCH=$TARGETARCH  go build \
         -ldflags "-X github.com/kubeshop/testkube/internal/pkg/api.Version=$VERSION \
@@ -26,9 +31,15 @@ RUN cd cmd/api-server; \
         -o /app -mod mod -a .
 
 FROM alpine:3.16  
+ENV HTTP_PROXY http://127.0.0.1:3128/
+ENV HTTPS_PROXY http://127.0.0.1:3128/
+RUN echo $HTTP_PROXY && echo $http_proxy && echo $HTTPS_PROXY && echo $https_proxy
 RUN apk --no-cache add ca-certificates libssl1.1
 WORKDIR /root/
 COPY  --from=build /app /bin/app
+
+ENV HTTP_PROXY $HP
+ENV HTTPS_PROXY $HPS
 
 USER 1001
 

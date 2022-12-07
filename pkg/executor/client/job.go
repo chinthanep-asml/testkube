@@ -55,10 +55,17 @@ const (
 // NewJobExecutor creates new job executor
 func NewJobExecutor(repo result.Repository, namespace string, images executor.Images, templates executor.Templates,
 	serviceAccountName string, metrics ExecutionCounter, emiter *event.Emitter, configMap config.Repository) (client *JobExecutor, err error) {
+	/* CHINTHAN */
+	var clientSet *kubernetes.Clientset = nil
+	/* CHINTHAN */
+
+	/* OLD */
+	/*log.DefaultLogger.Infow("MULTITENANCY Creating k8sclient")
 	clientSet, err := k8sclient.ConnectToK8s()
 	if err != nil {
 		return client, err
-	}
+	}*/
+	/* OLD */
 
 	return &JobExecutor{
 		ClientSet:          clientSet,
@@ -115,15 +122,19 @@ type JobOptions struct {
 
 // Logs returns job logs stream channel using kubernetes api
 func (c JobExecutor) Logs(id string) (out chan output.Output, err error) {
+	
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::Logs() ", "id", id)
+	
 	out = make(chan output.Output)
 	logs := make(chan []byte)
 
 	go func() {
+		log.DefaultLogger.Infow("MULTITENANCY JobExecutor::Logs() func()")
 		defer func() {
 			c.Log.Debug("closing JobExecutor.Logs out log")
 			close(out)
 		}()
-
+		log.DefaultLogger.Infow("MULTITENANCY JobExecutor::Logs() before calling TailJobLogs() ", "id", id)
 		if err := c.TailJobLogs(id, logs); err != nil {
 			out <- output.NewOutputError(err)
 			return
@@ -145,28 +156,55 @@ func (c JobExecutor) Logs(id string) (out chan output.Output, err error) {
 // Execute starts new external test execution, reads data and returns ID
 // Execution is started asynchronously client can check later for results
 func (c JobExecutor) Execute(execution *testkube.Execution, options ExecuteOptions) (result testkube.ExecutionResult, err error) {
-	result = testkube.NewRunningExecutionResult()
-
-	ctx := context.Background()
-	err = c.CreateJob(ctx, *execution, options)
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::Execute() ")
+	/* CHINTHAN */
+	clientSet, err := k8sclient.ConnectToK8sExecutor()
 	if err != nil {
 		return result.Err(err), err
 	}
+	c.ClientSet = clientSet
+	c.Namespace = "klarriofc000tstkube1-testkube"
+	c.serviceAccountName = "testkube-service-account"
+	/* CHINTHAN */
+
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::Execute() ", "ClientSet", c.ClientSet)
+	
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::Execute() about to call NewRunningExecutionResult()")
+	result = testkube.NewRunningExecutionResult()
+
+	ctx := context.Background()
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::Execute() about to call CreateJob()")
+	err = c.CreateJob(ctx, *execution, options)
+	if err != nil {
+		log.DefaultLogger.Infow("MULTITENANCY JobExecutor::Execute() CreateJob failed ", "error", err)
+		return result.Err(err), err
+	}
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::Execute() after creating job")
 	go c.MonitorJobForTimeout(ctx, execution.Id)
 
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::Execute() c.ClientSet.CoreV1().Pods")
 	podsClient := c.ClientSet.CoreV1().Pods(c.Namespace)
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::Execute() after c.ClientSet.CoreV1().Pods(c.Namespace")
 	pods, err := executor.GetJobPods(podsClient, execution.Id, 1, 10)
 	if err != nil {
 		return result.Err(err), err
 	}
 
+	//log.DefaultLogger.Infow("MULTITENANCY JobExecutor::Execute()", "pods", pods)
+
 	l := c.Log.With("executionID", execution.Id, "type", "async")
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::Execute() execution.Id ", "execution.Id", execution.Id)
 
 	for _, pod := range pods.Items {
+		log.DefaultLogger.Infow("MULTITENANCY JobExecutor::Execute() looping pods items ", "pod.Labels", pod.Labels)
+		log.DefaultLogger.Infow("MULTITENANCY JobExecutor::Execute() looping pods items ", "pod.Labels[job-name]", pod.Labels["job-name"])
 		if pod.Status.Phase != corev1.PodRunning && pod.Labels["job-name"] == execution.Id {
+			log.DefaultLogger.Infow("MULTITENANCY JobExecutor::Execute() looping pods items async wait for complete status or error")
 			// async wait for complete status or error
 			go func(pod corev1.Pod) {
+				log.DefaultLogger.Infow("MULTITENANCY JobExecutor::Execute() looping pods items func()")
 				_, err := c.updateResultsFromPod(ctx, pod, l, execution, result)
+				log.DefaultLogger.Infow("MULTITENANCY JobExecutor::Execute() looping pods items func() after updateResultsFromPod")
 				if err != nil {
 					l.Errorw("update results from jobs pod error", "error", err)
 				}
@@ -184,6 +222,19 @@ func (c JobExecutor) Execute(execution *testkube.Execution, options ExecuteOptio
 // Execute starts new external test execution, reads data and returns ID
 // Execution is started synchronously client will be blocked
 func (c JobExecutor) ExecuteSync(execution *testkube.Execution, options ExecuteOptions) (result testkube.ExecutionResult, err error) {
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::ExecuteSync() ")
+	/* CHINTHAN */
+	clientSet, err := k8sclient.ConnectToK8sExecutor()
+	if err != nil {
+		return result.Err(err), err
+	}
+	c.ClientSet = clientSet
+	c.Namespace = "klarriofc000tstkube1-testkube"
+	c.serviceAccountName = "testkube-service-account"
+	/* CHINTHAN */
+
+	//c.ClientSet = clientSet
+
 	result = testkube.NewRunningExecutionResult()
 
 	ctx := context.Background()
@@ -214,6 +265,9 @@ func (c JobExecutor) ExecuteSync(execution *testkube.Execution, options ExecuteO
 }
 
 func (c JobExecutor) MonitorJobForTimeout(ctx context.Context, jobName string) {
+	
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::MonitorJobForTimeout() ")
+
 	ticker := time.NewTicker(pollJobStatus)
 	l := c.Log.With("jobName", jobName)
 	for {
@@ -260,17 +314,23 @@ func (c JobExecutor) MonitorJobForTimeout(ctx context.Context, jobName string) {
 
 // CreateJob creates new Kubernetes job based on execution and execute options
 func (c JobExecutor) CreateJob(ctx context.Context, execution testkube.Execution, options ExecuteOptions) error {
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::CreateJob() ", "c.Namespace", c.Namespace)
 	jobs := c.ClientSet.BatchV1().Jobs(c.Namespace)
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::CreateJob() Created BatchV1().Jobs", "jobs", jobs)
 	jobOptions, err := NewJobOptions(c.images.Init, c.templates.Job, c.serviceAccountName, execution, options)
 	if err != nil {
 		return err
 	}
+
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::CreateJob() Creating job with options", "jobOptions", jobOptions)
 
 	c.Log.Debug("creating job with options", "options", jobOptions)
 	jobSpec, err := NewJobSpec(c.Log, jobOptions)
 	if err != nil {
 		return err
 	}
+
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::CreateJob() ", "jobSpec", jobSpec)
 
 	_, err = jobs.Create(ctx, jobSpec, metav1.CreateOptions{})
 	return err
@@ -280,49 +340,67 @@ func (c JobExecutor) CreateJob(ctx context.Context, execution testkube.Execution
 func (c JobExecutor) updateResultsFromPod(ctx context.Context, pod corev1.Pod, l *zap.SugaredLogger, execution *testkube.Execution, result testkube.ExecutionResult) (testkube.ExecutionResult, error) {
 	var err error
 
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::updateResultsFromPod() ")
+
 	// save stop time and final state
 	defer c.stopExecution(ctx, l, execution, &result, err)
 
 	// wait for complete
 	l.Debug("poll immediate waiting for pod to succeed")
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::updateResultsFromPod() poll immediate waiting for pod to succeed")
 	if err = wait.PollImmediate(pollInterval, pollTimeout, executor.IsPodReady(c.ClientSet, pod.Name, c.Namespace)); err != nil {
 		// continue on poll err and try to get logs later
 		l.Errorw("waiting for pod complete error", "error", err)
+		log.DefaultLogger.Infow("MULTITENANCY JobExecutor::updateResultsFromPod() waiting for pod complete error", "error", err)
 	}
 	l.Debug("poll immediate end")
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::updateResultsFromPod() poll immediate end")
 
 	var logs []byte
 	logs, err = executor.GetPodLogs(c.ClientSet, c.Namespace, pod)
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::updateResultsFromPod() after GetPodLogs")
 	if err != nil {
 		l.Errorw("get pod logs error", "error", err)
+		log.DefaultLogger.Infow("MULTITENANCY JobExecutor::updateResultsFromPod() get pod logs error", "error", err)
 		return result, err
 	}
 
 	// parse job ouput log (JSON stream)
 	result, _, err = output.ParseRunnerOutput(logs)
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::updateResultsFromPod() after ParseRunnerOutput ", "result", result)
 	if err != nil {
 		l.Errorw("parse ouput error", "error", err)
+		log.DefaultLogger.Infow("MULTITENANCY JobExecutor::updateResultsFromPod() parse ouput error", "error", err)
 		return result, err
 	}
 	// saving result in the defer function
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::updateResultsFromPod() saving result in the defer function")
 	return result, nil
 
 }
 
 func (c JobExecutor) stopExecution(ctx context.Context, l *zap.SugaredLogger, execution *testkube.Execution, result *testkube.ExecutionResult, passedErr error) {
 	savedExecution, err := c.Repository.Get(ctx, execution.Id)
+
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::stopExecution() ")
+
 	l.Debugw("stopping execution", "executionId", execution.Id, "status", result.Status, "executionStatus", execution.ExecutionResult.Status, "passedError", passedErr, "savedExecutionStatus", savedExecution.ExecutionResult.Status)
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::stopExecution() stopping execution", "executionId", execution.Id, "status", result.Status, "executionStatus", execution.ExecutionResult.Status, "passedError", passedErr, "savedExecutionStatus", savedExecution.ExecutionResult.Status)
 	if err != nil {
 		l.Errorw("get execution error", "error", err)
 	}
 
 	if savedExecution.IsCanceled() || savedExecution.IsTimeout() {
+		log.DefaultLogger.Infow("MULTITENANCY JobExecutor::stopExecution() canceled or timedout")
 		return
 	}
 
 	execution.Stop()
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::stopExecution() after execution.Stopped")
 	err = c.Repository.EndExecution(ctx, *execution)
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::stopExecution() after EndExecution")
 	if err != nil {
+		log.DefaultLogger.Infow("MULTITENANCY JobExecutor::stopExecution() update execution result error")
 		l.Errorw("Update execution result error", "error", err)
 	}
 
@@ -331,35 +409,48 @@ func (c JobExecutor) stopExecution(ctx context.Context, l *zap.SugaredLogger, ex
 	}
 
 	eventToSend := testkube.NewEventEndTestSuccess(execution)
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::stopExecution() after eventToSend")
 	if result.IsAborted() {
 		result.Output = result.Output + "\nTest run was aborted manually."
 		eventToSend = testkube.NewEventEndTestAborted(execution)
+		log.DefaultLogger.Infow("MULTITENANCY JobExecutor::stopExecution() Test run was aborted manually")
 	} else if result.IsTimeout() {
 		result.Output = result.Output + "\nTest run was aborted due to timeout."
 		eventToSend = testkube.NewEventEndTestTimeout(execution)
+		log.DefaultLogger.Infow("MULTITENANCY JobExecutor::stopExecution() Test run was aborted due to timeout")
 	}
 
 	// metrics increase
 	execution.ExecutionResult = result
 	l.Infow("execution ended, saving result", "executionId", execution.Id, "status", result.Status)
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::stopExecution() execution ended, saving result", "executionId", execution.Id, "status", result.Status)
+
 	err = c.Repository.UpdateResult(ctx, execution.Id, *result)
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::stopExecution() after UpdateResult")
+
 	if err != nil {
+		log.DefaultLogger.Infow("MULTITENANCY JobExecutor::stopExecution() after update execution result error")
 		l.Errorw("Update execution result error", "error", err)
 	}
 
 	c.metrics.IncExecuteTest(*execution)
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::stopExecution() after IncExecuteTest")
 	c.Emitter.Notify(eventToSend)
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::stopExecution() after Notify")
 
 	telemetryEnabled, err := c.configMap.GetTelemetryEnabled(ctx)
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::stopExecution() after GetTelemetryEnabled")
 	if err != nil {
 		l.Debugw("getting telemetry enabled error", "error", err)
 	}
 
 	if !telemetryEnabled {
+		log.DefaultLogger.Infow("MULTITENANCY JobExecutor::stopExecution() telemetry not enabled")
 		return
 	}
 
 	clusterID, err := c.configMap.GetUniqueClusterId(ctx)
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::stopExecution() after GetUniqueClusterId")
 	if err != nil {
 		l.Debugw("getting cluster id error", "error", err)
 	}
@@ -379,6 +470,7 @@ func (c JobExecutor) stopExecution(ctx context.Context, l *zap.SugaredLogger, ex
 		status = string(*execution.ExecutionResult.Status)
 	}
 
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::stopExecution() before calling SendRunEvent")
 	out, err := telemetry.SendRunEvent("testkube_api_run_test", telemetry.RunParams{
 		AppVersion: api.Version,
 		DataSource: dataSource,
@@ -388,10 +480,13 @@ func (c JobExecutor) stopExecution(ctx context.Context, l *zap.SugaredLogger, ex
 		DurationMs: execution.DurationMs,
 		Status:     status,
 	})
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::stopExecution() after SEndRunEvent")
 	if err != nil {
 		l.Debugw("sending run test telemetry event error", "error", err)
+		log.DefaultLogger.Infow("MULTITENANCY JobExecutor::stopExecution() sending run test telemetry event error", "error", err)
 	} else {
 		l.Debugw("sending run test telemetry event", "output", out)
+		log.DefaultLogger.Infow("MULTITENANCY JobExecutor::stopExecution() sending run test telemetry event", "output", out)
 	}
 }
 
@@ -415,39 +510,67 @@ func NewJobOptionsFromExecutionOptions(options ExecuteOptions) JobOptions {
 // TailJobLogs - locates logs for job pod(s)
 func (c *JobExecutor) TailJobLogs(id string, logs chan []byte) (err error) {
 
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::TailJobLogs() before changing anything", "id", id, "c.Namespace", c.Namespace)
+
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::TailJobLogs() before changing anything full ", "full jobexecutor ", c)
+
+	/* CHINTHAN */
+	clientSet, err := k8sclient.ConnectToK8sExecutor()
+	if err != nil {
+		log.DefaultLogger.Errorw("MULTITENANCY JobExecutor::TailJobLogs() unable to connect to k8s")
+		return err
+	}
+	c.ClientSet = clientSet
+	c.Namespace = "klarriofc000tstkube1-testkube"
+	c.serviceAccountName = "testkube-service-account"
+	/* CHINTHAN */
+
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::TailJobLogs() ", "ClientSet", c.ClientSet)
+
 	podsClient := c.ClientSet.CoreV1().Pods(c.Namespace)
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::TailJobLogs() got podsClient")
 	ctx := context.Background()
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::TailJobLogs() got context.Bg()")
 
 	pods, err := executor.GetJobPods(podsClient, id, 1, 10)
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::TailJobLogs() got pods")
 	if err != nil {
+		log.DefaultLogger.Infow("MULTITENANCY JobExecutor::TailJobLogs() error in getting pods")
 		close(logs)
 		return err
 	}
 
+	
 	for _, pod := range pods.Items {
+		log.DefaultLogger.Infow("MULTITENANCY JobExecutor::TailJobLogs() looping ", "pod.Labels", pod.Labels, "id", id)
 		if pod.Labels["job-name"] == id {
-
+			log.DefaultLogger.Infow("MULTITENANCY JobExecutor::TailJobLogs() looping id found ", "podNamespace", pod.Namespace, "podName", pod.Name, "podStatus", pod.Status)
 			l := c.Log.With("podNamespace", pod.Namespace, "podName", pod.Name, "podStatus", pod.Status)
 
 			switch pod.Status.Phase {
 
 			case corev1.PodRunning:
+				log.DefaultLogger.Infow("MULTITENANCY JobExecutor::TailJobLogs() looping corev1.PodRunning: tailing pods logs: immediately")
 				l.Debug("tailing pod logs: immediately")
 				return c.TailPodLogs(ctx, pod, logs)
 
 			case corev1.PodFailed:
+				log.DefaultLogger.Infow("MULTITENANCY JobExecutor::TailJobLogs() looping corev1.PodFailed: can't get pods logs, pod failed")
 				err := fmt.Errorf("can't get pod logs, pod failed: %s/%s", pod.Namespace, pod.Name)
 				l.Errorw(err.Error())
 				return c.GetLastLogLineError(ctx, pod)
 
 			default:
+				log.DefaultLogger.Infow("MULTITENANCY JobExecutor::TailJobLogs() looping default: tailing job logs: waiting for pod to be ready")
 				l.Debugw("tailing job logs: waiting for pod to be ready")
 				if err = wait.PollImmediate(pollInterval, pollTimeout, executor.IsPodLoggable(c.ClientSet, pod.Name, c.Namespace)); err != nil {
+					log.DefaultLogger.Infow("MULTITENANCY JobExecutor::TailJobLogs() looping default: poll immediate error when tailing logs")
 					l.Errorw("poll immediate error when tailing logs", "error", err)
 					return c.GetLastLogLineError(ctx, pod)
 				}
 
 				l.Debug("tailing pod logs")
+				log.DefaultLogger.Infow("MULTITENANCY JobExecutor::TailJobLogs() looping default: tailing pod logs")
 				return c.TailPodLogs(ctx, pod, logs)
 			}
 		}
@@ -457,30 +580,46 @@ func (c *JobExecutor) TailJobLogs(id string, logs chan []byte) (err error) {
 }
 
 func (c *JobExecutor) TailPodLogs(ctx context.Context, pod corev1.Pod, logs chan []byte) (err error) {
+	
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::TailPodLogs() ", "pod", pod)
+
 	count := int64(1)
 
 	var containers []string
 	for _, container := range pod.Spec.InitContainers {
+		log.DefaultLogger.Infow("MULTITENANCY JobExecutor::TailPodLogs() loop InitContainers ", "container.Name", container.Name, "container", container)
 		containers = append(containers, container.Name)
 	}
 
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::TailPodLogs() after InitContainers append ", "containers", containers)
+
 	for _, container := range pod.Spec.Containers {
+		log.DefaultLogger.Infow("MULTITENANCY JobExecutor::TailPodLogs() loop Containers ", "container.Name", container.Name, "container", container)
 		containers = append(containers, container.Name)
 	}
+
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::TailPodLogs() after Containers append ", "containers", containers)
 
 	go func() {
 		defer close(logs)
 
+		log.DefaultLogger.Infow("MULTITENANCY JobExecutor::TailPodLogs() func() ")
+
 		for _, container := range containers {
+			log.DefaultLogger.Infow("MULTITENANCY JobExecutor::TailPodLogs() func() looping containers ")
 			podLogOptions := corev1.PodLogOptions{
 				Follow:    true,
 				TailLines: &count,
 				Container: container,
 			}
 
+			log.DefaultLogger.Infow("MULTITENANCY JobExecutor::TailPodLogs() func() looping containers after podlogopions")
+
 			podLogRequest := c.ClientSet.CoreV1().
 				Pods(c.Namespace).
 				GetLogs(pod.Name, &podLogOptions)
+
+			log.DefaultLogger.Infow("MULTITENANCY JobExecutor::TailPodLogs() func() looping containers after podlogrequest")
 
 			stream, err := podLogRequest.Stream(ctx)
 			if err != nil {
@@ -488,9 +627,14 @@ func (c *JobExecutor) TailPodLogs(ctx context.Context, pod corev1.Pod, logs chan
 				continue
 			}
 
+			log.DefaultLogger.Infow("MULTITENANCY JobExecutor::TailPodLogs() func() looping containers after podlogrequest.stream")
+
 			reader := bufio.NewReader(stream)
 
+			log.DefaultLogger.Infow("MULTITENANCY JobExecutor::TailPodLogs() func() looping containers after newreader")
+
 			for {
+				log.DefaultLogger.Infow("MULTITENANCY JobExecutor::TailPodLogs() func() looping containers for")
 				b, err := utils.ReadLongLine(reader)
 				if err != nil {
 					if err == io.EOF {
@@ -498,11 +642,14 @@ func (c *JobExecutor) TailPodLogs(ctx context.Context, pod corev1.Pod, logs chan
 					}
 					break
 				}
+				log.DefaultLogger.Infow("MULTITENANCY JobExecutor::TailPodLogs() func() looping containers TailPodLogs stream scan", "out", b, "pod", pod.Name)
 				c.Log.Debug("TailPodLogs stream scan", "out", b, "pod", pod.Name)
 				logs <- b
 			}
+			log.DefaultLogger.Infow("MULTITENANCY JobExecutor::TailPodLogs() func() after for loop")
 
 			if err != nil {
+				log.DefaultLogger.Infow("MULTITENANCY JobExecutor::TailPodLogs() func() looping containers scanner error", "error", err)
 				c.Log.Errorw("scanner error", "error", err)
 			}
 		}
@@ -518,6 +665,8 @@ func (c *JobExecutor) GetPodLogError(ctx context.Context, pod corev1.Pod) (logsB
 
 // GetLastLogLineError return error if last line is failed
 func (c *JobExecutor) GetLastLogLineError(ctx context.Context, pod corev1.Pod) error {
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::GetLastLogLineError() ")
+
 	l := c.Log.With("pod", pod.Name, "namespace", pod.Namespace)
 	log, err := c.GetPodLogError(ctx, pod)
 	if err != nil {
@@ -536,20 +685,42 @@ func (c *JobExecutor) GetLastLogLineError(ctx context.Context, pod corev1.Pod) e
 
 // AbortK8sJob aborts K8S by job name
 func (c *JobExecutor) Abort(execution *testkube.Execution) (result *testkube.ExecutionResult) {
+	
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::Abort() ", "c.Namespace", c.Namespace, "execution.Id", execution.Id, "c.ClientSet", c.ClientSet)
+
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::Abort() ", "execution", execution)
+
+	clientSet, err := k8sclient.ConnectToK8sExecutor()
+	if err != nil {
+		log.DefaultLogger.Infow("MULTITENANCY JobExecutor::Abort() ", "error", err)
+		return
+	}
+	c.ClientSet = clientSet
+	c.Namespace = "klarriofc000tstkube1-testkube"
+	c.serviceAccountName = "testkube-service-account"
+
 	l := c.Log.With("execution", execution.Id)
 	ctx := context.Background()
 	result = executor.AbortJob(c.ClientSet, c.Namespace, execution.Id)
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::Abort() job aborted", "execution", execution.Id, "result", result)
 	c.Log.Debugw("job aborted", "execution", execution.Id, "result", result)
 	c.stopExecution(ctx, l, execution, result, nil)
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::Abort() stopExecution called")
 	return
 }
 
 func (c *JobExecutor) Timeout(jobName string) (result *testkube.ExecutionResult) {
+	
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::Timeout() ")
+
 	l := c.Log.With("jobName", jobName)
 	l.Infow("job timeout")
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::Timeout job timeout")
 	ctx := context.Background()
 	execution, err := c.Repository.Get(ctx, jobName)
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::Timeout ", "execution", execution)
 	if err != nil {
+		log.DefaultLogger.Infow("MULTITENANCY JobExecutor::Timeout error getting execution ", "error", err)
 		l.Errorw("error getting execution", "error", err)
 		return
 	}
@@ -563,6 +734,9 @@ func (c *JobExecutor) Timeout(jobName string) (result *testkube.ExecutionResult)
 
 // NewJobSpec is a method to create new job spec
 func NewJobSpec(log *zap.SugaredLogger, options JobOptions) (*batchv1.Job, error) {
+	
+	log.Infow("MULTITENANCY JobExecutor::NewJobSpec() ")
+
 	secretEnvVars := executor.PrepareSecretEnvs(options.SecretEnvs, options.Variables,
 		options.UsernameSecret, options.TokenSecret)
 
@@ -580,6 +754,9 @@ func NewJobSpec(log *zap.SugaredLogger, options JobOptions) (*batchv1.Job, error
 	var job batchv1.Job
 	jobSpec := buffer.String()
 	log.Debug("Job specification", jobSpec)
+	
+	log.Infow("MULTITENANCY JobExecutor::NewJobSpec()", "jobSpec", jobSpec)
+
 	decoder := yaml.NewYAMLOrJSONDecoder(bytes.NewBufferString(jobSpec), len(jobSpec))
 	if err := decoder.Decode(&job); err != nil {
 		return nil, fmt.Errorf("decoding job spec error: %w", err)
@@ -610,22 +787,43 @@ func NewJobSpec(log *zap.SugaredLogger, options JobOptions) (*batchv1.Job, error
 }
 
 func NewJobOptions(initImage, jobTemplate string, serviceAccountName string, execution testkube.Execution, options ExecuteOptions) (jobOptions JobOptions, err error) {
+	/* CHINTHAN */
+	execution.TestNamespace = "klarriofc000tstkube1-testkube"
+	/* CHINTHAN */
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::NewJobOptions() (beginning)", "execution", execution)
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::NewJobOptions() (beginning)", "options", options)
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::NewJobOptions() (beginning)", "initImage", initImage)
+	initImage = "europe-docker.pkg.dev/asml-dpng-dev-01/asml-ngdp-test-registry/docker.io/kubeshop/testkube-executor-init:SNAPSHOT"
+
 	jsn, err := json.Marshal(execution)
 	if err != nil {
 		return jobOptions, err
 	}
 
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::NewJobOptions()", "jsn", jsn)
+
 	jobOptions = NewJobOptionsFromExecutionOptions(options)
 	jobOptions.Name = execution.Id
 	jobOptions.Namespace = execution.TestNamespace
+	/* CHINTHAN */
+	jobOptions.Namespace = "klarriofc000tstkube1-testkube"
+	/* CHINTHAN */
 	jobOptions.Jsn = string(jsn)
 	jobOptions.InitImage = initImage
 	jobOptions.TestName = execution.TestName
 	if jobOptions.JobTemplate == "" {
+		log.DefaultLogger.Infow("MULTITENANCY JobExecutor::NewJobOptions() jobtemplate empty. setting it new ", "jobTemplate", jobTemplate)
 		jobOptions.JobTemplate = jobTemplate
 	}
 	jobOptions.Variables = execution.Variables
 	jobOptions.ImagePullSecrets = options.ImagePullSecretNames
 	jobOptions.ServiceAccountName = serviceAccountName
+
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::NewJobOptions() (end)", "execution", execution)
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::NewJobOptions() (end)", "options", jobOptions)
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::NewJobOptions() (end)", "initImage", initImage)
+	
+	log.DefaultLogger.Infow("MULTITENANCY JobExecutor::NewJobOptions() (end)", "jobOptions.JobTemplate", jobOptions.JobTemplate)
+
 	return
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/kubeshop/testkube/pkg/api/v1/testkube"
 	"github.com/kubeshop/testkube/pkg/workerpool"
 	"github.com/pkg/errors"
+	"github.com/kubeshop/testkube/pkg/log"
 )
 
 type Execution string
@@ -25,6 +26,8 @@ const (
 type ExecutorF func(context.Context, *testtriggersv1.TestTrigger) error
 
 func (s *Service) execute(ctx context.Context, t *testtriggersv1.TestTrigger) error {
+	log.DefaultLogger.Infow("MULTITENANCY executor.go Service::execute() ", "context", ctx)
+
 	status := s.getStatusForTrigger(t)
 
 	concurrencyLevel, err := strconv.Atoi(v1.DefaultConcurrencyLevel)
@@ -34,6 +37,7 @@ func (s *Service) execute(ctx context.Context, t *testtriggersv1.TestTrigger) er
 
 	switch t.Spec.Execution {
 	case ExecutionTest:
+		log.DefaultLogger.Infow("MULTITENANCY executor.go Service::execute() ExeucutionTest case")
 		var results []testkube.Execution
 
 		tests, err := s.getTests(t)
@@ -43,10 +47,12 @@ func (s *Service) execute(ctx context.Context, t *testtriggersv1.TestTrigger) er
 
 		request := testkube.ExecutionRequest{}
 
+		log.DefaultLogger.Infow("MULTITENANCY executor.go Service::execute() ExeucutionTest case before calling Sendrequests")
 		wp := workerpool.New[testkube.Test, testkube.ExecutionRequest, testkube.Execution](concurrencyLevel)
 		go wp.SendRequests(s.scheduler.PrepareTestRequests(tests, request))
 		go wp.Run(ctx)
 
+		log.DefaultLogger.Infow("MULTITENANCY executor.go Service::execute() ExeucutionTest case before getting GetResponses()")
 		for r := range wp.GetResponses() {
 			status.addExecutionID(r.Result.Id)
 			results = append(results, r.Result)
@@ -73,7 +79,9 @@ func (s *Service) execute(ctx context.Context, t *testtriggersv1.TestTrigger) er
 		return errors.Errorf("invalid execution: %s", t.Spec.Execution)
 	}
 
+	log.DefaultLogger.Infow("MULTITENANCY executor.go Service::execute() before status.start()")
 	status.start()
+	log.DefaultLogger.Infow("MULTITENANCY executor.go Service::execute() trigger service: executor component: started test execution for trigger %s/%s", t.Namespace, t.Name)
 	s.logger.Debugf("trigger service: executor component: started test execution for trigger %s/%s", t.Namespace, t.Name)
 
 	return nil
@@ -81,8 +89,12 @@ func (s *Service) execute(ctx context.Context, t *testtriggersv1.TestTrigger) er
 
 func (s *Service) getTests(t *testtriggersv1.TestTrigger) ([]testsv3.Test, error) {
 	var tests []testsv3.Test
+	
+	log.DefaultLogger.Infow("MULTITENANCY executor.go Service::getTests()")
+
 	if t.Spec.TestSelector.Name != "" {
 		s.logger.Debugf("trigger service: executor component: fetching testsv3.Test with name %s", t.Spec.TestSelector.Name)
+		log.DefaultLogger.Infow("MULTITENANCY executor.go Service::getTests() trigger service: executor component: fetching testsv3.Test with name %s", t.Spec.TestSelector.Name)
 		test, err := s.testsClient.Get(t.Spec.TestSelector.Name)
 		if err != nil {
 			return nil, err
@@ -102,6 +114,7 @@ func (s *Service) getTests(t *testtriggersv1.TestTrigger) ([]testsv3.Test, error
 		}
 		tests = append(tests, testList.Items...)
 	}
+	log.DefaultLogger.Infow("MULTITENANCY executor.go Service::getTests() end")
 	return tests, nil
 }
 

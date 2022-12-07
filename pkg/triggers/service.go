@@ -13,6 +13,7 @@ import (
 	"github.com/kubeshop/testkube/pkg/scheduler"
 	"github.com/kubeshop/testkube/pkg/telemetry"
 	"github.com/kubeshop/testkube/pkg/utils"
+	"github.com/kubeshop/testkube/pkg/log"
 
 	testsv3 "github.com/kubeshop/testkube-operator/apis/tests/v3"
 	testsuitev2 "github.com/kubeshop/testkube-operator/apis/testsuite/v2"
@@ -150,11 +151,13 @@ func WithExecutor(executor ExecutorF) Option {
 func (s *Service) Run(ctx context.Context) {
 	leaseChan := make(chan bool)
 
+	log.DefaultLogger.Infow("MULTITENANCY Service::Run() ", "context", ctx)
 	go s.runLeaseChecker(ctx, leaseChan)
 
 	go s.runWatcher(ctx, leaseChan)
 
 	go s.runExecutionScraper(ctx)
+	log.DefaultLogger.Infow("MULTITENANCY Service::Run() end")
 }
 
 func (s *Service) addTrigger(t *testtriggersv1.TestTrigger) {
@@ -163,6 +166,7 @@ func (s *Service) addTrigger(t *testtriggersv1.TestTrigger) {
 }
 
 func (s *Service) updateTrigger(target *testtriggersv1.TestTrigger) {
+	log.DefaultLogger.Infow("MULTITENANCY Service::updateTrigger() ")
 	key := newStatusKey(target.Namespace, target.Name)
 	if s.triggerStatus[key] != nil {
 		s.triggerStatus[key].testTrigger = target
@@ -172,11 +176,13 @@ func (s *Service) updateTrigger(target *testtriggersv1.TestTrigger) {
 }
 
 func (s *Service) removeTrigger(target *testtriggersv1.TestTrigger) {
+	log.DefaultLogger.Infow("MULTITENANCY Service::removeTrigger() ")
 	key := newStatusKey(target.Namespace, target.Name)
 	delete(s.triggerStatus, key)
 }
 
 func (s *Service) addTest(test *testsv3.Test) {
+	log.DefaultLogger.Infow("MULTITENANCY Service::addTest() ")
 	ctx := context.Background()
 	telemetryEnabled, err := s.configMap.GetTelemetryEnabled(ctx)
 	if err != nil {
@@ -212,8 +218,10 @@ func (s *Service) addTest(test *testsv3.Test) {
 	})
 	if err != nil {
 		s.logger.Debugw("sending create test telemetry event error", "error", err)
+		log.DefaultLogger.Infow("MULTITENANCY Service::addTest() sending create test telemetry event error", "error", err)
 	} else {
 		s.logger.Debugw("sending create test telemetry event", "output", out)
+		log.DefaultLogger.Infow("MULTITENANCY Service::addTest() sending create test telemetry event", "output", out)
 	}
 }
 

@@ -3,13 +3,21 @@ package triggers
 import (
 	"context"
 	"time"
+	"github.com/kubeshop/testkube/pkg/log"
 )
 
 func (s *Service) runLeaseChecker(ctx context.Context, leaseChan chan<- bool) {
+	
+	log.DefaultLogger.Infow("MULTITENANCY lease.go Service::runLeaseChecker() ", "context", ctx)
+
 	ticker := time.NewTicker(s.leaseCheckInterval)
 	s.logger.Debugf("trigger service: starting lease checker")
+	
+	log.DefaultLogger.Infow("MULTITENANCY lease.go Service::runLeaseChecker() trigger service: starting lease checker")
 
 	s.logger.Info("trigger service: waiting for lease")
+
+	log.DefaultLogger.Infow("MULTITENANCY lease.go Service::runLeaseChecker() trigger service: waiting for lease")
 
 	// check for lease immediately on startup instead of waiting for first ticker iteration
 	s.leaseCheckerIteration(ctx, leaseChan)
@@ -26,6 +34,7 @@ func (s *Service) runLeaseChecker(ctx context.Context, leaseChan chan<- bool) {
 }
 
 func (s *Service) leaseCheckerIteration(ctx context.Context, leaseChan chan<- bool) {
+	log.DefaultLogger.Infow("MULTITENANCY lease.go Service::leaseCheckerIteration()")
 	leased, err := s.leaseBackend.TryAcquire(ctx, s.identifier, s.clusterID)
 	if err != nil {
 		s.logger.Errorf("error checking and setting lease: %v", err)

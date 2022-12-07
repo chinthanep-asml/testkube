@@ -6,11 +6,13 @@ import (
 	"go.uber.org/zap"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"github.com/kubeshop/testkube/pkg/log"
 
 	testtriggersv1 "github.com/kubeshop/testkube-operator/apis/testtriggers/v1"
 )
 
 func (s *Service) match(ctx context.Context, e *watcherEvent) error {
+	log.DefaultLogger.Infow("MULTITENANCY scraper.go Service::match() ", "context", ctx)
 	for _, status := range s.triggerStatus {
 		t := status.testTrigger
 		if t.Spec.Resource != string(e.resource) {
@@ -40,6 +42,7 @@ func (s *Service) match(ctx context.Context, e *watcherEvent) error {
 }
 
 func matchEventOrCause(targetEvent string, event *watcherEvent) bool {
+	log.DefaultLogger.Infow("MULTITENANCY scraper.go Service::matchEventOrCause() ", "targetEvent", targetEvent)
 	if targetEvent == string(event.eventType) {
 		return true
 	}
@@ -52,6 +55,7 @@ func matchEventOrCause(targetEvent string, event *watcherEvent) bool {
 }
 
 func matchSelector(selector *testtriggersv1.TestTriggerSelector, namespace string, event *watcherEvent, logger *zap.SugaredLogger) bool {
+	log.DefaultLogger.Infow("MULTITENANCY scraper.go Service::matchSelector() ", "namespace", namespace)
 	if selector.Name != "" {
 		return selector.Name == event.name && namespace == event.namespace
 	}

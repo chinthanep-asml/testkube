@@ -75,7 +75,7 @@ build-testkube-bin-intel:
 		cmd/kubectl-testkube/main.go
 
 docker-build-api:
-	docker build  --platform linux/x86_64 -t kubeshop/testkube-api-server:$(COMMIT)-dev -f build/api-server/Dockerfile .
+	docker build  --platform linux/x86_64 -t kubeshop/testkube-api-server:$(COMMIT)-dev --network=host --build-arg HTTP_PROXY --build-arg HTTPS_PROXY -f build/api-server/Dockerfile .
 
 dev-install-local-executors:
 	kubectl apply --namespace testkube -f https://raw.githubusercontent.com/kubeshop/testkube-operator/main/config/samples/executor_v1_executor.yaml

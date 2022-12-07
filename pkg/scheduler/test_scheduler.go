@@ -13,6 +13,7 @@ import (
 	"github.com/kubeshop/testkube/pkg/executor/client"
 	testsmapper "github.com/kubeshop/testkube/pkg/mapper/tests"
 	"github.com/kubeshop/testkube/pkg/workerpool"
+	"github.com/kubeshop/testkube/pkg/log"
 	"github.com/pkg/errors"
 )
 
@@ -37,6 +38,7 @@ func (s *Scheduler) executeTest(ctx context.Context, test testkube.Test, request
 	execution testkube.Execution, err error) {
 	// generate random execution name in case there is no one set
 	// like for docker images
+	log.DefaultLogger.Infow("MULTITENANCY executeTest()")
 	if request.Name == "" && test.ExecutionRequest != nil && test.ExecutionRequest.Name != "" {
 		request.Name = test.ExecutionRequest.Name
 	}
@@ -45,9 +47,11 @@ func (s *Scheduler) executeTest(ctx context.Context, test testkube.Test, request
 		request.Name = test.Name
 	}
 
+	log.DefaultLogger.Infow("MULTITENANCY executeTest()", "test.Name", test.Name)
 	request.Number = s.getNextExecutionNumber(test.Name)
 	request.Name = fmt.Sprintf("%s-%d", request.Name, request.Number)
 
+	log.DefaultLogger.Infow("MULTITENANCY executeTest()", "request.Name", request.Name)
 	// test name + test execution name should be unique
 	execution, _ = s.executionResults.GetByNameAndTest(ctx, request.Name, test.Name)
 	if execution.Name == request.Name {
@@ -58,18 +62,22 @@ func (s *Scheduler) executeTest(ctx context.Context, test testkube.Test, request
 	if err != nil {
 		return execution.Errw("can't get current secret uuid: %w", err), nil
 	}
-
+	log.DefaultLogger.Infow("MULTITENANCY executeTest()", "secretUUID", secretUUID)
+	
 	request.TestSecretUUID = secretUUID
+	log.DefaultLogger.Infow("MULTITENANCY executeTest() merge available data into execution options test spec, executor spec, request, test id")
 	// merge available data into execution options test spec, executor spec, request, test id
 	options, err := s.getExecuteOptions(test.Namespace, test.Name, request)
 	if err != nil {
 		return execution.Errw("can't create valid execution options: %w", err), nil
 	}
 
+	log.DefaultLogger.Infow("MULTITENANCY executeTest() store execution in storage, can be get from API now")
 	// store execution in storage, can be get from API now
 	execution = newExecutionFromExecutionOptions(options)
 	options.ID = execution.Id
 
+	log.DefaultLogger.Infow("MULTITENANCY executeTest() createSecretsReferences")
 	if err := s.createSecretsReferences(&execution); err != nil {
 		return execution.Errw("can't create secret variables `Secret` references: %w", err), nil
 	}
@@ -80,10 +88,13 @@ func (s *Scheduler) executeTest(ctx context.Context, test testkube.Test, request
 	}
 
 	s.logger.Infow("calling executor with options", "options", options.Request)
+	log.DefaultLogger.Infow("MULTITENANCY executeTest() calling executor with options")
 	execution.Start()
 
+	log.DefaultLogger.Infow("MULTITENANCY executeTest() notify that test started")
 	s.events.Notify(testkube.NewEventStartTest(&execution))
 
+	log.DefaultLogger.Infow("MULTITENANCY executeTest() update storage with current execution status - 1")
 	// update storage with current execution status
 	err = s.executionResults.StartExecution(ctx, execution.Id, execution.StartTime)
 	if err != nil {
@@ -93,16 +104,20 @@ func (s *Scheduler) executeTest(ctx context.Context, test testkube.Test, request
 
 	var result testkube.ExecutionResult
 	// sync/async test execution
+	log.DefaultLogger.Infow("MULTITENANCY executeTest() before calling startTestExecution")
 	result, err = s.startTestExecution(options, result, err, &execution)
+	log.DefaultLogger.Infow("MULTITENANCY executeTest() after calling startTestExecution ", "result", result)
 
 	// set execution result to one created
 	execution.ExecutionResult = &result
 
+	log.DefaultLogger.Infow("MULTITENANCY executeTest() update storage with current execution status - 2 " , "result", result)
 	// update storage with current execution status
 	if uerr := s.executionResults.UpdateResult(ctx, execution.Id, result); uerr != nil {
 		s.events.Notify(testkube.NewEventEndTestFailed(&execution))
 		return execution.Errw("update execution error: %w", uerr), nil
 	}
+	log.DefaultLogger.Infow("MULTITENANCY executeTest() after calling UpdateResult()")
 
 	if err != nil {
 		s.events.Notify(testkube.NewEventEndTestFailed(&execution))
@@ -116,20 +131,25 @@ func (s *Scheduler) executeTest(ctx context.Context, test testkube.Test, request
 		s.events.Notify(testkube.NewEventEndTestSuccess(&execution))
 	}
 
+	log.DefaultLogger.Infow("MULTITENANCY executeTest() End of the function")
 	return execution, nil
 }
 
 func (s *Scheduler) startTestExecution(options client.ExecuteOptions, result testkube.ExecutionResult, err error, execution *testkube.Execution) (testkube.ExecutionResult, error) {
 	executor := s.getExecutor(options.TestName)
 	if options.Sync {
+		log.DefaultLogger.Infow("MULTITENANCY startTestExecution() Calling ExecuteSync")
 		result, err = executor.ExecuteSync(execution, options)
 	} else {
+		log.DefaultLogger.Infow("MULTITENANCY startTestExecution() Calling Execute")
 		result, err = executor.Execute(execution, options)
+		log.DefaultLogger.Infow("MULTITENANCY startTestExecution() after Execute ", "result", result)
 	}
 	return result, err
 }
 
 func (s *Scheduler) getExecutor(testName string) client.Executor {
+	log.DefaultLogger.Infow("MULTITENANCY getExecutor()", "testName", testName)
 	testCR, err := s.testsClient.Get(testName)
 	if err != nil {
 		s.logger.Errorw("can't get test", "test", testName, "error", err)
@@ -142,8 +162,10 @@ func (s *Scheduler) getExecutor(testName string) client.Executor {
 	}
 	switch executorCR.Spec.ExecutorType {
 	case containerType:
+		log.DefaultLogger.Infow("MULTITENANCY getExecutor returning containerExecutor")
 		return s.containerExecutor
 	default:
+		log.DefaultLogger.Infow("MULTITENANCY getExecutor returning executor")
 		return s.executor
 	}
 }
